@@ -59,11 +59,13 @@ withErrorContext layer =
   local (errorContextLayerPush layer)
 
 errorContextDump :: MonadIO m => ErrorContext -> m ()
-errorContextDump (ErrorContext (layer : layers)) = do
-  liftIO . putStrLn . Text.unpack . errorContextLayerUnpack $ layer
+errorContextDump (ErrorContext (layer0 : layers)) = do
+  liftIO . putStrLn . Text.unpack . errorContextLayerUnpack $ layer0
   forM_ layers $ \ (ErrorContextLayer layer) -> do
     let layerS = Text.unpack layer
     liftIO . putStrLn $ "Caused by: " <> layerS
+errorContextDump (ErrorContext []) =
+  pure ()
 
 -- | Context aware replacement for 'throwM'.
 throwWithContext
