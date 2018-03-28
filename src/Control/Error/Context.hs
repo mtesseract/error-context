@@ -1,90 +1,127 @@
-{-# LANGUAGE MultiParamTypeClasses #-}
-{-# LANGUAGE OverloadedStrings     #-}
+{-# LANGUAGE DeriveFunctor              #-}
+{-# LANGUAGE FlexibleInstances          #-}
+{-# LANGUAGE FunctionalDependencies     #-}
+{-# LANGUAGE GeneralizedNewtypeDeriving #-}
+{-# LANGUAGE MultiParamTypeClasses      #-}
+{-# LANGUAGE OverloadedStrings          #-}
+{-# LANGUAGE UndecidableInstances       #-}
 
 module Control.Error.Context
-  ( ErrorContext
-  , ErrorContextLayer
+  ( ErrorContext(..)
+  , ErrorContextT
+  , MonadErrorContext(..)
   , ErrorWithContext(..)
-  , HasErrorContext(..)
-  , errorContextRoot
-  , withErrorContext
-  , errorContextDump
-  , throwWithContext
-  , errorContextAdd
-  , errorForgetContext
-  , errorContextPush
-  ) where
+  , runErrorContextT
+  , errorContextualize
+  , errorContextForget
+  , errorContextualizeIO
+  , errorWithContextDump
+  )
+  where
 
-import           Control.Monad.Catch  (Exception, MonadThrow, throwM)
+import           Control.Exception.Safe       (SomeException (..), catchAny)
+import           Control.Monad.Catch          (Exception, MonadCatch,
+                                               MonadThrow, throwM)
 import           Control.Monad.Reader
-import           Data.Monoid
-import           Data.String
-import           Data.Text            (Text)
-import qualified Data.Text            as Text
-import           Data.Typeable
+import           Control.Monad.State
+import           Control.Monad.Trans.Resource
+import           Control.Monad.Writer
+import           Data.Text                    (Text)
+import qualified Data.Text                    as Text
 
-errorContextLayerUnpack :: ErrorContextLayer -> Text
-errorContextLayerUnpack (ErrorContextLayer t) = t
+-- | Monad type class providing contextualized errors.
+class (Monad m, MonadThrow m) => MonadErrorContext m where
+  errorContextCollect :: m ErrorContext
+  withErrorContext :: Text -> m a -> m a
 
-data ErrorContextLayer =
-  ErrorContextLayer Text deriving (Show, Eq)
-data ErrorContext = ErrorContext [ErrorContextLayer] deriving (Show, Eq)
+-- | Data type implementing 'MonadErrorContext'.
+newtype ErrorContextT m a =
+  ErrorContextT { unErrorContextT :: ReaderT ErrorContext m a
+                } deriving ( Functor
+                           , Applicative
+                           , Monad
+                           , MonadTrans
+                           , MonadIO
+                           , MonadState s
+                           , MonadCatch
+                           , MonadWriter w )
 
-instance IsString ErrorContextLayer where
-  fromString = ErrorContextLayer . Text.pack
+-- | Unwrap an 'ErrorContextT'. Exceptions of type @e@ thrown in the
+-- provided action via 'throwM' will cause an @'ErrorWithContext' e@
+-- exception to be propagated upwards.
+runErrorContextT :: ErrorContextT m a -> m a
+runErrorContextT ctx =
+  runReaderT (unErrorContextT ctx) (ErrorContext [])
 
-class HasErrorContext env where
-  errorContextLayerPush :: ErrorContextLayer -> env -> env
-  errorContextGet       :: env -> ErrorContext
+-- | Implement 'MonadErrorContext' for 'ErrorContextT'.
+instance MonadThrow m => MonadErrorContext (ErrorContextT m) where
+  errorContextCollect = ErrorContextT ask
+  withErrorContext layer (ErrorContextT m) =
+    ErrorContextT (local (errorContextPush_ layer) m)
 
-errorContextPush :: ErrorContextLayer -> ErrorContext -> ErrorContext
-errorContextPush layer (ErrorContext layers) =
+-- | Implement 'MonadThrow' for 'ErrorContextT'.
+instance MonadThrow m => MonadThrow (ErrorContextT m) where
+  throwM e = do
+    errCtx <- errorContextCollect
+    lift $ throwM (ErrorWithContext e errCtx)
+
+-- | Implement 'MonadResource' for 'ErrorContextT'.
+instance MonadResource m => MonadResource (ErrorContextT m) where
+  liftResourceT = lift . liftResourceT
+
+-- | Implement 'MonadReader' for 'ErrorContextT'.
+instance MonadReader r m => MonadReader r (ErrorContextT m) where
+  ask = ErrorContextT (lift ask)
+  local f (ErrorContextT (ReaderT m)) =
+    ErrorContextT (ReaderT (\ errCtx -> local f (m errCtx)))
+
+-- | Encapsulates the error context — essentially a stack of 'Text'
+-- values.
+data ErrorContext = ErrorContext [Text] deriving (Show, Eq)
+
+errorContextPush_ :: Text -> ErrorContext -> ErrorContext
+errorContextPush_ layer (ErrorContext layers) =
   ErrorContext (layer : layers)
 
+-- | Boundles an error with an 'ErrorContext'.
 data ErrorWithContext e =
   ErrorWithContext e ErrorContext
-  deriving (Show, Typeable)
+  deriving (Show)
 
+-- | An @ErrorWithContext e@ can be used as an exception.
 instance Exception e => Exception (ErrorWithContext e)
 
-errorContextRoot :: ErrorContext
-errorContextRoot = ErrorContext []
+-- | Dump an error with context to stdout.
+errorWithContextDump :: (Show e, MonadIO m) => ErrorWithContext e -> m ()
+errorWithContextDump (ErrorWithContext err ctx) = do
+  liftIO . putStrLn $ "Error: " <> show err
+  errorContextDump ctx
 
-withErrorContext
-  :: (HasErrorContext r, MonadReader r m)
-  => ErrorContextLayer
-  -> m a
-  -> m a
-withErrorContext layer =
-  local (errorContextLayerPush layer)
+  where errorContextDump (ErrorContext layers) = do
+          forM_ layers $ \ layer -> do
+            liftIO . putStrLn $ "  caused by: " <> Text.unpack layer
 
-errorContextDump :: MonadIO m => ErrorContext -> m ()
-errorContextDump (ErrorContext (layer0 : layers)) = do
-  liftIO . putStrLn . Text.unpack . errorContextLayerUnpack $ layer0
-  forM_ layers $ \ (ErrorContextLayer layer) -> do
-    let layerS = Text.unpack layer
-    liftIO . putStrLn $ "Caused by: " <> layerS
-errorContextDump (ErrorContext []) =
-  pure ()
-
--- | Context aware replacement for 'throwM'.
-throwWithContext
-  :: (Exception e, MonadReader r m, HasErrorContext r, MonadThrow m)
-  => e
-  -> m a
-throwWithContext exn = do
-  errCtx <- asks errorContextGet
-  throwM $ ErrorWithContext exn errCtx
-
--- | Enrich an error with context.
-errorContextAdd
-  :: (MonadReader r m, HasErrorContext r)
+-- | Enrich an error with an error context.
+errorContextualize
+  :: MonadErrorContext m
   => e
   -> m (ErrorWithContext e)
-errorContextAdd e = do
-  errCtx <- asks errorContextGet
+errorContextualize e = do
+  errCtx <- errorContextCollect
   pure $ ErrorWithContext e errCtx
 
--- | Forgets a context from an enriched error.
-errorForgetContext :: ErrorWithContext e -> e
-errorForgetContext (ErrorWithContext e _errCtx) = e
+-- | Run the provided IO action and rethrow any exceptions thrown by
+-- this IO exception as an 'ErrorWithContext' exception.
+errorContextualizeIO :: (MonadIO m, MonadCatch m, MonadErrorContext m) => IO a -> m a
+errorContextualizeIO m = catchAny (liftIO m) $ \ (SomeException e) -> throwM e
+
+-- | Forgets the context from an enriched error.
+errorContextForget :: ErrorWithContext e -> e
+errorContextForget (ErrorWithContext e _errCtx) = e
+-- class HasErrorContext r where
+--   errorContextEnvPush :: Text -> r -> r
+--   errorContextEnvGet :: r -> ErrorContext
+
+-- instance (MonadThrow m, HasErrorContext r) => MonadErrorContext (ReaderT r m) where
+--   errorContextCollect = asks errorContextEnvGet
+--   withErrorContext layer = local (errorContextEnvPush layer)

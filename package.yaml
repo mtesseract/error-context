@@ -19,6 +19,10 @@ dependencies:
 - mtl
 - text
 - exceptions
+- safe-exceptions
+- unliftio-core
+- resourcet
+- monad-logger
 
 ghc-options:
 - -Wall
@@ -31,8 +35,12 @@ tests:
     main:                Spec.hs
     source-dirs:         test
     ghc-options:
+    - -g
     - -threaded
     - -rtsopts
     - -with-rtsopts=-N
     dependencies:
     - error-context
+    - tasty
+    - tasty-hunit
+    - safe-exceptions
