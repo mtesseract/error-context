@@ -1,13 +1,14 @@
-{-# LANGUAGE FlexibleInstances #-}
-{-# LANGUAGE OverloadedStrings #-}
-{-# LANGUAGE QuasiQuotes       #-}
-{-# LANGUAGE TemplateHaskell   #-}
+{-# LANGUAGE FlexibleInstances   #-}
+{-# LANGUAGE OverloadedStrings   #-}
+{-# LANGUAGE QuasiQuotes         #-}
+{-# LANGUAGE ScopedTypeVariables #-}
+{-# LANGUAGE TemplateHaskell     #-}
 
 module Control.Error.Context.Test (tests) where
 
 import           Control.Error.Context
 import           Control.Exception      (Exception (..), SomeException (..),
-                                         throwIO)
+                                         throw, throwIO)
 import           Control.Exception.Safe (tryAny)
 import           Control.Monad
 import           Control.Monad.Catch    (catch, throwM, try)
@@ -16,13 +17,18 @@ import           Test.Tasty
 import           Test.Tasty.HUnit
 
 tests :: TestTree
-tests = testGroup "Tests"
-     [ testCase "Contextualize IO Exception" testContextualizeIOException
-     , testCase "Contextualize error value" testContextualizeErrorValue
-     , testCase "Forgetting error context" testForgetErrorContext
-     , testCase "Dumping error context" testDumpErrorContext
-     , testCase "Throw and catch" testThrowAndCatch
-     ]
+tests =
+  testGroup
+    "Tests"
+    [ testCase "Contextualize IO Exception" testContextualizeIOException
+    , testCase "Contextualize error value" testContextualizeErrorValue
+    , testCase "Forgetting error context" testForgetErrorContext
+    , testCase "Dumping error context" testDumpErrorContext
+    , testCase "Throw and catch" testThrowAndCatch
+    , testCase
+        "Catch non-contextualized exception with context"
+        testNonContextualizedCatchWithContext
+    ]
 
 data TestException = TestException deriving (Show, Eq)
 
@@ -30,7 +36,7 @@ instance Exception TestException
 
 testContextualizeIOException :: Assertion
 testContextualizeIOException = do
-  Left (ErrorWithContext TestException (ErrorContext ctx)) <- try . runErrorContextT $
+  Left (ErrorWithContext (ErrorContext ctx) TestException) <- try . runErrorContextT $
     withErrorContext "A" $
     withErrorContext "B" $
     liftIO failingIOException
@@ -42,7 +48,7 @@ testContextualizeIOException = do
 
 testContextualizeErrorValue :: Assertion
 testContextualizeErrorValue = do
-  ErrorWithContext TestException (ErrorContext ctx) <- runErrorContextT $
+  ErrorWithContext (ErrorContext ctx) TestException <- runErrorContextT $
     withErrorContext "A" $
     withErrorContext "B" $
     errorContextualize TestException
@@ -50,7 +56,7 @@ testContextualizeErrorValue = do
 
 testForgetErrorContext :: Assertion
 testForgetErrorContext = do
-  errWithCtx @ (ErrorWithContext TestException _) <- runErrorContextT $
+  errWithCtx @ (ErrorWithContext _ctx TestException) <- runErrorContextT $
     withErrorContext "A" $
     withErrorContext "B" $
     errorContextualize TestException
@@ -58,7 +64,7 @@ testForgetErrorContext = do
 
 testDumpErrorContext :: Assertion
 testDumpErrorContext = do
-  errWithCtx @ (ErrorWithContext _ _) <- runErrorContextT $
+  errWithCtx @ (ErrorWithContext _ctx _exn) <- runErrorContextT $
     withErrorContext "A" $
     withErrorContext "B" $
     errorContextualize TestException
@@ -68,3 +74,17 @@ testThrowAndCatch :: Assertion
 testThrowAndCatch = do
   void . runErrorContextT $
     catch (throwM TestException) $ \ TestException -> pure ()
+
+testNonContextualizedCatchWithContext :: Assertion
+testNonContextualizedCatchWithContext = do
+  ErrorWithContext (ErrorContext ctx) TestException <- runErrorContextT $
+    withErrorContext "A" $
+    withErrorContext "B" $ do
+    catchWithContext throwPureException $ \ (exn :: ErrorWithContext TestException) -> do
+      liftIO $ putStrLn "CAUGHT"
+      pure exn
+  [] @=? ctx
+
+  where throwPureException = do
+          _ <- throw TestException
+          undefined
