@@ -6,8 +6,12 @@
 module Control.Error.Context.Test (tests) where
 
 import           Control.Error.Context
-import           Control.Exception     (Exception, throwIO)
-import           Control.Monad.Catch   (try)
+import           Control.Exception      (Exception (..), SomeException (..),
+                                         throwIO)
+import           Control.Exception.Safe (tryAny)
+import           Control.Monad
+import           Control.Monad.Catch    (catch, throwM, try)
+import           Control.Monad.IO.Class
 import           Test.Tasty
 import           Test.Tasty.HUnit
 
@@ -17,6 +21,7 @@ tests = testGroup "Tests"
      , testCase "Contextualize error value" testContextualizeErrorValue
      , testCase "Forgetting error context" testForgetErrorContext
      , testCase "Dumping error context" testDumpErrorContext
+     , testCase "Throw and catch" testThrowAndCatch
      ]
 
 data TestException = TestException deriving (Show, Eq)
@@ -28,7 +33,7 @@ testContextualizeIOException = do
   Left (ErrorWithContext TestException (ErrorContext ctx)) <- try . runErrorContextT $
     withErrorContext "A" $
     withErrorContext "B" $
-    errorContextualizeIO failingIOException
+    liftIO failingIOException
   ["B", "A"] @=? ctx
 
   where failingIOException :: IO ()
@@ -58,3 +63,8 @@ testDumpErrorContext = do
     withErrorContext "B" $
     errorContextualize TestException
   errorWithContextDump errWithCtx
+
+testThrowAndCatch :: Assertion
+testThrowAndCatch = do
+  void . runErrorContextT $
+    catch (throwM TestException) $ \ TestException -> pure ()

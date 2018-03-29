@@ -1,3 +1,15 @@
+{-|
+Module      : Control.Error.Context
+Description : API for enriching errors with contexts
+Copyright   : (c) Moritz Clasmeier 2018
+License     : BSD3
+Maintainer  : mtesseract@silverratio.net
+Stability   : experimental
+Portability : POSIX
+
+Provides an API for enriching errors with contexts.
+-}
+
 {-# LANGUAGE DeriveFunctor              #-}
 {-# LANGUAGE FlexibleInstances          #-}
 {-# LANGUAGE FunctionalDependencies     #-}
@@ -16,12 +28,14 @@ module Control.Error.Context
   , errorContextForget
   , errorContextualizeIO
   , errorWithContextDump
+  , catchWithContext
   )
   where
 
 import           Control.Exception.Safe       (SomeException (..), catchAny)
-import           Control.Monad.Catch          (Exception, MonadCatch,
+import           Control.Monad.Catch          (Exception, MonadCatch (..),
                                                MonadThrow, throwM)
+import           Control.Monad.IO.Unlift
 import           Control.Monad.Reader
 import           Control.Monad.State
 import           Control.Monad.Trans.Resource
@@ -36,14 +50,12 @@ class (Monad m, MonadThrow m) => MonadErrorContext m where
 
 -- | Data type implementing 'MonadErrorContext'.
 newtype ErrorContextT m a =
-  ErrorContextT { unErrorContextT :: ReaderT ErrorContext m a
+  ErrorContextT { _runErrorContextT :: ReaderT ErrorContext m a
                 } deriving ( Functor
                            , Applicative
                            , Monad
                            , MonadTrans
-                           , MonadIO
                            , MonadState s
-                           , MonadCatch
                            , MonadWriter w )
 
 -- | Unwrap an 'ErrorContextT'. Exceptions of type @e@ thrown in the
@@ -51,7 +63,12 @@ newtype ErrorContextT m a =
 -- exception to be propagated upwards.
 runErrorContextT :: ErrorContextT m a -> m a
 runErrorContextT ctx =
-  runReaderT (unErrorContextT ctx) (ErrorContext [])
+  runReaderT (_runErrorContextT ctx) (ErrorContext [])
+
+instance (MonadCatch m, MonadIO m) => MonadIO (ErrorContextT m) where
+  liftIO m = do
+    ctx <- errorContextCollect
+    lift . liftIO $ catchAny m $ \ (SomeException exn) -> throwM (ErrorWithContext exn ctx)
 
 -- | Implement 'MonadErrorContext' for 'ErrorContextT'.
 instance MonadThrow m => MonadErrorContext (ErrorContextT m) where
@@ -65,8 +82,19 @@ instance MonadThrow m => MonadThrow (ErrorContextT m) where
     errCtx <- errorContextCollect
     lift $ throwM (ErrorWithContext e errCtx)
 
+instance MonadCatch m => MonadCatch (ErrorContextT m) where
+  catch (ErrorContextT (ReaderT m)) c =
+    ErrorContextT . ReaderT $ \ r -> m r `catch` \ (ErrorWithContext exn _ctx) -> runReaderT (_runErrorContextT (c exn)) r
+
+catchWithContext :: (MonadErrorContext m, MonadCatch m, Exception e) => m a -> (e -> m a) -> m a
+catchWithContext m handler = catch m handlerWithContext
+  where handlerWithContext (ErrorWithContext exn _ctx) = handler exn
+
+-- tryWithContext :: (MonadErrorContext m, MonadCatch m, Exception e) => m a -> m (Either (ErrorWithContext e) a)
+-- tryWithContext m handler = undefined
+
 -- | Implement 'MonadResource' for 'ErrorContextT'.
-instance MonadResource m => MonadResource (ErrorContextT m) where
+instance (MonadCatch m, MonadResource m) => MonadResource (ErrorContextT m) where
   liftResourceT = lift . liftResourceT
 
 -- | Implement 'MonadReader' for 'ErrorContextT'.
@@ -113,11 +141,14 @@ errorContextualize e = do
 -- | Run the provided IO action and rethrow any exceptions thrown by
 -- this IO exception as an 'ErrorWithContext' exception.
 errorContextualizeIO :: (MonadIO m, MonadCatch m, MonadErrorContext m) => IO a -> m a
-errorContextualizeIO m = catchAny (liftIO m) $ \ (SomeException e) -> throwM e
+errorContextualizeIO m = do
+  errCtx <- errorContextCollect
+  liftIO $ catchAny m $ \ (SomeException exn) -> throwM (ErrorWithContext exn errCtx)
 
 -- | Forgets the context from an enriched error.
 errorContextForget :: ErrorWithContext e -> e
 errorContextForget (ErrorWithContext e _errCtx) = e
+
 -- class HasErrorContext r where
 --   errorContextEnvPush :: Text -> r -> r
 --   errorContextEnvGet :: r -> ErrorContext
