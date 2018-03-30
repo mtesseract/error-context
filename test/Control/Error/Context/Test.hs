@@ -7,9 +7,7 @@
 module Control.Error.Context.Test (tests) where
 
 import           Control.Error.Context
-import           Control.Exception      (Exception (..), SomeException (..),
-                                         throw, throwIO)
-import           Control.Exception.Safe (tryAny)
+import           Control.Exception      (Exception (..), throw, throwIO)
 import           Control.Monad
 import           Control.Monad.Catch    (catch, throwM, try)
 import           Control.Monad.IO.Class
@@ -20,13 +18,17 @@ tests :: TestTree
 tests =
   testGroup
     "Tests"
-    [ testCase "Contextualize IO Exception" testContextualizeIOException
-    , testCase "Contextualize error value" testContextualizeErrorValue
-    , testCase "Forgetting error context" testForgetErrorContext
-    , testCase "Dumping error context" testDumpErrorContext
-    , testCase "Throw and catch" testThrowAndCatch
-    , testCase
-        "Catch non-contextualized exception with context"
+    [ testCase "Contextualize IO Exception"
+        testContextualizeIOException
+    , testCase "Contextualize error value"
+        testContextualizeErrorValue
+    , testCase "Forgetting error context"
+        testForgetErrorContext
+    , testCase "Dumping error context"
+        testDumpErrorContext
+    , testCase "Throw and catch"
+        testThrowAndCatch
+    , testCase "Catch non-contextualized exception with context"
         testNonContextualizedCatchWithContext
     ]
 
@@ -81,10 +83,7 @@ testNonContextualizedCatchWithContext = do
     withErrorContext "A" $
     withErrorContext "B" $ do
     catchWithContext throwPureException $ \ (exn :: ErrorWithContext TestException) -> do
-      liftIO $ putStrLn "CAUGHT"
       pure exn
   [] @=? ctx
 
-  where throwPureException = do
-          _ <- throw TestException
-          undefined
+  where throwPureException = throw TestException
