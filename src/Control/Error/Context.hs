@@ -13,6 +13,7 @@ Provides an API for enriching errors with contexts.
 {-# LANGUAGE DeriveFunctor              #-}
 {-# LANGUAGE FlexibleInstances          #-}
 {-# LANGUAGE FunctionalDependencies     #-}
+{-# LANGUAGE GADTs                      #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
 {-# LANGUAGE MultiParamTypeClasses      #-}
 {-# LANGUAGE OverloadedStrings          #-}
@@ -28,9 +29,12 @@ module Control.Error.Context
   , errorContextualize
   , errorContextForget
   , errorWithContextDump
+  , catchWithoutContext
   , catchWithContext
   , tryWithContext
   , tryAnyWithContext
+  , catchJustWithContext
+  , catchAnyWithContext
   )
   where
 
@@ -100,8 +104,12 @@ instance MonadThrow m => MonadErrorContext (ErrorContextT m) where
 -- | Implement 'MonadThrow' for 'ErrorContextT'.
 instance MonadThrow m => MonadThrow (ErrorContextT m) where
   throwM e = do
-    ctx <- errorContextCollect
-    lift $ throwM (ErrorWithContext ctx e)
+    case fromException (toException e) :: Maybe (ErrorWithContext SomeException) of
+      Just exnWithCtx ->
+        lift $ throwM exnWithCtx
+      Nothing -> do
+        ctx <- errorContextCollect
+        lift $ throwM (ErrorWithContext ctx (SomeException e))
 
 -- | Implement 'MonadCatch' for 'ErrorContextT'.
 instance MonadCatch m => MonadCatch (ErrorContextT m) where
@@ -112,18 +120,21 @@ instance MonadCatch m => MonadCatch (ErrorContextT m) where
 -- | Like 'catch', but the handler is required to be context-aware. Is
 -- also able to catch exceptions of type 'e' (without context).
 catchWithContext
-  :: (MonadCatch m, Exception e)
+  :: (MonadCatch m, Exception e) -- , MonadErrorContext m)
   => m a
   -> (ErrorWithContext e -> m a)
   -> m a
 catchWithContext m handler = catchJust pre m handler
-  where pre someExn =
+  where pre :: Exception e => SomeException -> Maybe (ErrorWithContext e)
+        pre someExn =
           -- First we check if the exception is of the type
           -- 'ErrorWithContext e'. If so, provide it to the handler
           -- directly.
           case fromException someExn of
-            Just exn ->
-              Just exn
+            Just (ErrorWithContext ctx someExnWithoutCtx :: ErrorWithContext SomeException) ->
+              case fromException someExnWithoutCtx of
+                Just exn -> Just (ErrorWithContext ctx exn)
+                Nothing  -> Nothing
             Nothing  ->
               -- Then we check if the exception is of the type 'e',
               -- (without context). In this case we convert it into an
@@ -142,16 +153,17 @@ catchWithContext m handler = catchJust pre m handler
 -- the handler.
 catchWithoutContext
   :: forall a e m
-   . (MonadCatch m, Exception e)
+   . (MonadCatch m, Exception e) -- , MonadErrorContext m)
   => m a
   -> (e -> m a)
   -> m a
 catchWithoutContext m handler = catchJust pre m handler
-  where pre someExn =
+  where pre :: SomeException -> Maybe e
+        pre someExn =
           -- First we check if the exception is of the type 'e'
           -- (without context). If so, provide it to the handler
           -- directly.
-          case fromException someExn of
+          case fromException someExn :: Maybe e of
             Just exn ->
               Just exn
             Nothing  ->
@@ -159,10 +171,14 @@ catchWithoutContext m handler = catchJust pre m handler
               -- 'ErrorWithContext e'. In this case we forget the
               -- context and provide the exception without context to
               -- the handler.
-              case fromException someExn of
-                Just (ErrorWithContext (ErrorContext []) exn) ->
-                  Just exn
-                _  ->
+              case fromException someExn :: Maybe (ErrorWithContext SomeException) of
+                Just (ErrorWithContext _ctx someExnWithoutContext) ->
+                  case fromException someExnWithoutContext :: Maybe e of
+                    Just exn ->
+                      Just exn
+                    Nothing ->
+                      Nothing
+                Nothing  ->
                   Nothing
 
 tryAnyWithContext
@@ -228,3 +244,27 @@ errorContextForget
   :: ErrorWithContext e
   -> e
 errorContextForget (ErrorWithContext _ctx e) = e
+
+catchJustWithContext
+  :: (MonadCatch m, Exception e)
+  => (e -> Maybe b)
+  -> m a
+  -> (b -> m a)
+  -> m a
+catchJustWithContext f a b =
+  a `catch` \ exn -> maybe (throwM exn) b $ f exn
+
+-- | Context aware version of 'catchAny'.
+catchAnyWithContext
+  :: MonadCatch m
+  => m a
+  -> (ErrorWithContext SomeException -> m a)
+  -> m a
+catchAnyWithContext m handler = catchJust pre m handler
+  where pre :: SomeException -> Maybe (ErrorWithContext SomeException)
+        pre someExn =
+          case fromException someExn :: Maybe (ErrorWithContext SomeException) of
+            Just exn ->
+              Just exn
+            Nothing ->
+              Just (ErrorWithContext (ErrorContext []) someExn)

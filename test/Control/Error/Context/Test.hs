@@ -20,6 +20,14 @@ tests =
     "Tests"
     [ testCase "Contextualize IO Exception"
         testContextualizeIOException
+    , testCase "throwM"
+        testThrow
+    , testCase "catchAnyWithContext"
+        testCatchAnyWithContext
+    -- , testCase "catchJustWithContext"
+    --     testCatchJustWithContext
+    , testCase "Catch context-enriched exception without context"
+        testCatchWithoutContext
     , testCase "Contextualize error value"
         testContextualizeErrorValue
     , testCase "Forgetting error context"
@@ -47,6 +55,16 @@ testContextualizeIOException = do
   where failingIOException :: IO ()
         failingIOException =
           throwIO TestException
+
+testCatchWithoutContext :: Assertion
+testCatchWithoutContext = do
+  TestException <- runErrorContextT $
+    withErrorContext "A" $
+    withErrorContext "B" $
+    -- throwM TestException
+    catchWithoutContext (throwM TestException) $ \ (exn :: TestException) -> do
+      pure exn
+  pure ()
 
 testContextualizeErrorValue :: Assertion
 testContextualizeErrorValue = do
@@ -76,6 +94,18 @@ testThrowAndCatch :: Assertion
 testThrowAndCatch = do
   void . runErrorContextT $
     catch (throwM TestException) $ \ TestException -> pure ()
+
+testThrow :: Assertion
+testThrow = do
+  catch (runErrorContextT (throwM TestException)) $ \ someExn -> do
+    let Just (ErrorWithContext _ctx someInnerExn) = fromException someExn
+    liftIO $ Just TestException @=? fromException someInnerExn
+
+testCatchAnyWithContext :: Assertion
+testCatchAnyWithContext = do
+  catchAnyWithContext (runErrorContextT (throwM TestException)) $
+    \ (ErrorWithContext _ctx someExn) -> do
+      Just TestException @=? fromException someExn
 
 testNonContextualizedCatchWithContext :: Assertion
 testNonContextualizedCatchWithContext = do
