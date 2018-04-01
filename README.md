@@ -1,5 +1,7 @@
-Welcome to *error-context*! This is an **experimental** library for
-context-aware error and exception handling in Haskell.
+# !! This is experimental work-in-progress !!
+
+Welcome to *error-context*! This is a library providing context-aware
+error and exception handling for Haskell.
 
 ## What problem does *error-context* attempt to solve?
 
