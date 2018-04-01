@@ -63,7 +63,6 @@ testCatchWithoutContext = do
   TestException <- runErrorContextT $
     withErrorContext "A" $
     withErrorContext "B" $
-    -- throwM TestException
     catchWithoutContext (throwM TestException) $ \ (exn :: TestException) -> do
       pure exn
   pure ()

@@ -51,6 +51,7 @@ import           Control.Monad.Writer
 import           Data.Either.Combinators      (mapLeft)
 import           Data.Text                    (Text)
 import qualified Data.Text                    as Text
+import           Data.Typeable
 
 -- | Monad type class providing contextualized errors.
 class (Monad m, MonadThrow m) => MonadErrorContext m where
@@ -77,7 +78,16 @@ instance Functor ErrorWithContext where
   fmap f (ErrorWithContext ctx e) = ErrorWithContext ctx (f e)
 
 -- | An @ErrorWithContext e@ can be used as an exception.
-instance Exception e => Exception (ErrorWithContext e)
+instance Exception e => Exception (ErrorWithContext e) where
+  toException exn = SomeException exn
+  fromException (SomeException someExn) =
+    case cast someExn :: Maybe (ErrorWithContext e) of
+      Just (exnWithCtx @ (ErrorWithContext _ctx _exn)) ->
+        Just exnWithCtx
+      Nothing ->
+        Nothing
+  displayException (ErrorWithContext ctx exn) = do
+    "Exception: " <> displayException exn <> "\n" <> errorContextAsString ctx
 
 -- | Unwrap an 'ErrorContextT'. Exceptions of type @e@ thrown in the
 -- provided action via 'throwM' will cause an @'ErrorWithContext' e@
@@ -218,6 +228,10 @@ errorContextPush
 errorContextPush layer (ErrorContext layers) =
   ErrorContext (layer : layers)
 
+errorContextAsString :: ErrorContext -> String
+errorContextAsString (ErrorContext layers) =
+  concat $ map (\ layer -> "  caused by: " <> Text.unpack layer <> "\n") layers
+
 -- | Dump an error with context to stdout.
 errorWithContextDump
   :: (Show e, MonadIO m)
@@ -225,11 +239,7 @@ errorWithContextDump
   -> m ()
 errorWithContextDump (ErrorWithContext ctx err) = do
   liftIO . putStrLn $ "Error: " <> show err
-  errorContextDump ctx
-
-  where errorContextDump (ErrorContext layers) = do
-          forM_ layers $ \ layer -> do
-            liftIO . putStrLn $ "  caused by: " <> Text.unpack layer
+  liftIO . putStrLn . errorContextAsString $ ctx
 
 -- | Enrich an error value with an error context.
 errorContextualize
