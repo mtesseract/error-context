@@ -18,14 +18,13 @@ tests :: TestTree
 tests =
   testGroup
     "Tests"
-    [ testCase "Contextualize IO Exception"
+    [
+      testCase "Contextualize IO Exception"
         testContextualizeIOException
     , testCase "throwM"
         testThrow
     , testCase "catchAnyWithContext"
         testCatchAnyWithContext
-    -- , testCase "catchJustWithContext"
-    --     testCatchJustWithContext
     , testCase "Catch context-enriched exception without context"
         testCatchWithoutContext
     , testCase "Contextualize error value"
@@ -40,6 +39,18 @@ tests =
         testNonContextualizedCatchWithContext
     , testCase "ensureExceptionContext"
         testEnsureExceptionContext
+    , testCase "catch head exception"
+        testCatchHeadException
+    , testCase "tryAnyWithoutContext"
+        testTryAnyWithoutContext
+    , testCase "tryAnyWithContext"
+        testTryAnyWithContext
+    , testCase "tryWithContext"
+        testTryWithContext
+    , testCase "tryWithoutContext"
+        testTryWithoutContext
+    , testCase "Throw and catch"
+        testThrowAndCatch
     ]
 
 data TestException = TestException deriving (Show, Eq)
@@ -129,3 +140,46 @@ testEnsureExceptionContext = do
   let Just (ErrorWithContext ctx someExnWithoutCtx) = fromException someExn
   Just TestException @=? fromException someExnWithoutCtx
   ErrorContext ["B", "A"] @=? ctx
+
+testCatchHeadException :: Assertion
+testCatchHeadException = do
+  Left errWithCtx <- tryAnyWithContext . runErrorContextT $ do
+    withErrorContext "Here I am, calling head on an empty list!" $
+      ensureExceptionContext $ seq (head []) (pure ())
+  let (ErrorWithContext _ctx _exnWithoutCtx) = errWithCtx
+  putStrLn . displayException $ errWithCtx
+
+testTryAnyWithContext :: Assertion
+testTryAnyWithContext = do
+  Left (ErrorWithContext _ctx someExn) <- tryAnyWithContext . runErrorContextT $ do
+    void $ throwM TestException
+    pure ()
+  Just TestException @=? fromException someExn
+
+testTryAnyWithoutContext :: Assertion
+testTryAnyWithoutContext = do
+  Left someExn <- tryAnyWithoutContext . runErrorContextT $ do
+    void $ throwM TestException
+    pure ()
+  Just TestException @=? fromException someExn
+
+testTryWithContext :: Assertion
+testTryWithContext = do
+  Left (ErrorWithContext _ctx exn) <- tryWithContext . runErrorContextT $ do
+    void $ throwM TestException
+    pure ()
+  TestException @=? exn
+
+testTryWithoutContext :: Assertion
+testTryWithoutContext = do
+  Left exn <- tryWithoutContext . runErrorContextT $ do
+    void $ throwM TestException
+    pure ()
+  TestException @=? exn
+
+-- testTryAnyWithoutContext :: Assertion
+-- testTryAnyWithoutContext = do
+--   Left someExn <- tryAnyWithoutContext . runErrorContextT $ do
+--     void $ throwM TestException
+--     pure ()
+--   Just TestException @=? fromException someExn

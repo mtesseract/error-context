@@ -31,16 +31,16 @@ module Control.Error.Context
   , errorWithContextDump
   , catchWithoutContext
   , catchWithContext
-  , tryWithContext
-  , tryAnyWithContext
-  , catchJustWithContext
   , catchAnyWithContext
   , ensureExceptionContext
-  )
-  where
+  , tryAnyWithContext
+  , tryAnyWithoutContext
+  , tryWithContext
+  , tryWithoutContext
+  ) where
 
 import           Control.Exception.Safe       (SomeException (..), catchAny,
-                                               catchJust, try, tryAny)
+                                               catchJust)
 import           Control.Monad.Catch          (Exception (..), MonadCatch (..),
                                                MonadThrow, throwM)
 import           Control.Monad.IO.Unlift
@@ -48,7 +48,6 @@ import           Control.Monad.Reader
 import           Control.Monad.State
 import           Control.Monad.Trans.Resource
 import           Control.Monad.Writer
-import           Data.Either.Combinators      (mapLeft)
 import           Data.Text                    (Text)
 import qualified Data.Text                    as Text
 import           Data.Typeable
@@ -171,40 +170,52 @@ catchWithoutContext
 catchWithoutContext m handler = catchJust pre m handler
   where pre :: SomeException -> Maybe e
         pre someExn =
-          -- First we check if the exception is of the type 'e'
-          -- (without context). If so, provide it to the handler
-          -- directly.
-          case fromException someExn :: Maybe e of
-            Just exn ->
-              Just exn
+          -- First we check if the exception is of the type
+          -- 'ErrorWithContext e'. In this case we forget the context
+          -- and provide the exception without context to the handler.
+          case fromException someExn :: Maybe (ErrorWithContext SomeException) of
+            Just (ErrorWithContext _ctx someExnWithoutContext) ->
+              case fromException someExnWithoutContext :: Maybe e of
+                Just exn ->
+                  Just exn
+                Nothing ->
+                  Nothing
             Nothing  ->
-              -- Then we check if the exception is of the type
-              -- 'ErrorWithContext e'. In this case we forget the
-              -- context and provide the exception without context to
-              -- the handler.
-              case fromException someExn :: Maybe (ErrorWithContext SomeException) of
-                Just (ErrorWithContext _ctx someExnWithoutContext) ->
-                  case fromException someExnWithoutContext :: Maybe e of
-                    Just exn ->
-                      Just exn
-                    Nothing ->
-                      Nothing
+              -- Then we check if the exception is of type 'e'. If so,
+              -- provide it to the handler directly.
+              case fromException someExn :: Maybe e of
+                Just exn ->
+                  Just exn
                 Nothing  ->
                   Nothing
 
 tryAnyWithContext
-  :: (MonadErrorContext m, MonadCatch m)
+  :: MonadCatch m
   => m a
   -> m (Either (ErrorWithContext SomeException) a)
 tryAnyWithContext m =
-  mapLeft (ErrorWithContext (ErrorContext [])) <$> tryAny m
+  catchWithContext (Right `liftM` m) (return . Left)
+
+tryAnyWithoutContext
+  :: MonadCatch m
+  => m a
+  -> m (Either SomeException a)
+tryAnyWithoutContext m =
+  catchWithoutContext (Right `liftM` m) (return . Left)
 
 tryWithContext
-  :: (MonadErrorContext m, MonadCatch m, Exception e)
+  :: (MonadCatch m, Exception e)
   => m a
   -> m (Either (ErrorWithContext e) a)
 tryWithContext m =
-  mapLeft (ErrorWithContext (ErrorContext [])) <$> try m
+  catchWithContext (Right `liftM` m) (return . Left)
+
+tryWithoutContext
+  :: (MonadCatch m, Exception e)
+  => m a
+  -> m (Either e a)
+tryWithoutContext m =
+  catchWithoutContext (Right `liftM` m) (return . Left)
 
 -- | Implement 'MonadResource' for 'ErrorContextT'.
 instance (MonadCatch m, MonadResource m) => MonadResource (ErrorContextT m) where
@@ -255,15 +266,6 @@ errorContextForget
   :: ErrorWithContext e
   -> e
 errorContextForget (ErrorWithContext _ctx e) = e
-
-catchJustWithContext
-  :: (MonadCatch m, Exception e)
-  => (e -> Maybe b)
-  -> m a
-  -> (b -> m a)
-  -> m a
-catchJustWithContext f a b =
-  a `catch` \ exn -> maybe (throwM exn) b $ f exn
 
 -- | Context aware version of 'catchAny'.
 catchAnyWithContext
