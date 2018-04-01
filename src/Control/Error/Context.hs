@@ -35,6 +35,7 @@ module Control.Error.Context
   , tryAnyWithContext
   , catchJustWithContext
   , catchAnyWithContext
+  , ensureExceptionContext
   )
   where
 
@@ -268,3 +269,13 @@ catchAnyWithContext m handler = catchJust pre m handler
               Just exn
             Nothing ->
               Just (ErrorWithContext (ErrorContext []) someExn)
+
+ensureExceptionContext :: (MonadCatch m, MonadErrorContext m) => m a -> m a
+ensureExceptionContext m =
+  catchAny m $ \ someExn ->
+  case fromException someExn :: Maybe (ErrorWithContext SomeException) of
+    Just exnWithCtx ->
+      throwM exnWithCtx
+    Nothing -> do
+      ctx <- errorContextCollect
+      throwM $ ErrorWithContext ctx someExn

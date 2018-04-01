@@ -38,6 +38,8 @@ tests =
         testThrowAndCatch
     , testCase "Catch non-contextualized exception with context"
         testNonContextualizedCatchWithContext
+    , testCase "ensureExceptionContext"
+        testEnsureExceptionContext
     ]
 
 data TestException = TestException deriving (Show, Eq)
@@ -117,3 +119,14 @@ testNonContextualizedCatchWithContext = do
   [] @=? ctx
 
   where throwPureException = throw TestException
+
+testEnsureExceptionContext :: Assertion
+testEnsureExceptionContext = do
+  Left someExn <- try . runErrorContextT $
+    withErrorContext "A" $
+    withErrorContext "B" $ do
+    ensureExceptionContext $ do
+      throw TestException
+  let Just (ErrorWithContext ctx someExnWithoutCtx) = fromException someExn
+  Just TestException @=? fromException someExnWithoutCtx
+  ErrorContext ["B", "A"] @=? ctx
