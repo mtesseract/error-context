@@ -25,3 +25,24 @@ via special implementations of `MonadThrow`, `MonadCatch` and
 ## Examples
 
 See https://github.com/mtesseract/error-context/blob/master/test/Control/Error/Context/Test.hs.
+
+## What about "pure" exceptions?
+
+The `ErrorContextT` transformer implements `MonadThrow` and `MonadIO`,
+therefore exceptions thrown by `throwM` and via `liftIO` are
+automatically context-enriched. But the story for exceptional values
+created via
+
+```haskell
+throw :: Exception e => e -> a
+```
+
+are not context-enriched. But there is a workaround for this use-case:
+
+```haskell
+ensureExceptionContext :: (MonadCatch m, MonadErrorContext m) => m a -> m a
+```
+
+This function provides context-aware enriching for any exceptions
+thrown within some monadic value, including those thrown by evaluating
+values created by `throw`.
