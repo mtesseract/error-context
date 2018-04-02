@@ -5,15 +5,15 @@ error and exception handling for Haskell.
 
 ## What problem does *error-context* attempt to solve?
 
-Good error handling is hard. Sometimes it happens that when
-propagating errors some context is lost. Call traces sometimes help,
-but the current solutions in Haskell-land for accessing call traces
-are rather limited. Furthermore, sometimes call traces that at written
-by and for humans are more convenient to read.
+Good error handling is hard. In the case of failures it is important
+to keep as much context as necessary for a proper problem analysis.
+Call traces sometimes help, but the current solutions in Haskell-land
+for accessing call traces are rather limited.
 
 The *error-context* library allows you to easily attach call traces
 ('error contexts') to errors, in particular to exceptions. Special
-catch-functions are provided for accessing these contexts.
+`catch`- and `try`-functions are provided for accessing these
+contexts.
 
 ## How to use it?
 
@@ -32,14 +32,15 @@ See https://github.com/mtesseract/error-context/blob/master/test/Control/Error/C
 
 The `ErrorContextT` transformer implements `MonadThrow` and `MonadIO`,
 therefore exceptions thrown by `throwM` and via `liftIO` are
-automatically context-enriched. But the story for exceptional values
+automatically context-enriched. On the other hand, exceptional values
 created via
 
 ```haskell
 throw :: Exception e => e -> a
 ```
 
-are not context-enriched. But there is a workaround for this use-case:
+are not context-enriched per se. But there is a workaround for this
+use-case:
 
 ```haskell
 ensureExceptionContext :: (MonadCatch m, MonadErrorContext m) => m a -> m a
