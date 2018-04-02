@@ -32,6 +32,7 @@ module Control.Error.Context
   , catchWithoutContext
   , catchWithContext
   , catchAnyWithContext
+  , catchAnyWithoutContext
   , ensureExceptionContext
   , tryAnyWithContext
   , tryAnyWithoutContext
@@ -281,6 +282,21 @@ catchAnyWithContext m handler = catchJust pre m handler
               Just exn
             Nothing ->
               Just (ErrorWithContext (ErrorContext []) someExn)
+
+-- | Context aware version of 'catchAny'.
+catchAnyWithoutContext
+  :: MonadCatch m
+  => m a
+  -> (SomeException -> m a)
+  -> m a
+catchAnyWithoutContext m handler = catchJust pre m handler
+  where pre :: SomeException -> Maybe SomeException
+        pre someExn =
+          case fromException someExn :: Maybe (ErrorWithContext SomeException) of
+            Just (ErrorWithContext _ctx exnWithoutContext) ->
+              Just exnWithoutContext
+            Nothing ->
+              Just someExn
 
 ensureExceptionContext :: (MonadCatch m, MonadErrorContext m) => m a -> m a
 ensureExceptionContext m =

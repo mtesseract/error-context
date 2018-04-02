@@ -25,6 +25,12 @@ tests =
         testThrow
     , testCase "catchAnyWithContext"
         testCatchAnyWithContext
+    , testCase "catchAnyWithContext/pure"
+        testCatchAnyWithContextPure
+    , testCase "catchAnyWithoutContext"
+        testCatchAnyWithoutContext
+    , testCase "catchAnyWithoutContext/pure"
+        testCatchAnyWithoutContextPure
     , testCase "Catch context-enriched exception without context"
         testCatchWithoutContext
     , testCase "Contextualize error value"
@@ -43,12 +49,20 @@ tests =
         testCatchHeadException
     , testCase "tryAnyWithoutContext"
         testTryAnyWithoutContext
+    , testCase "tryAnyWithoutContext/pure"
+        testTryAnyWithoutContextPure
     , testCase "tryAnyWithContext"
         testTryAnyWithContext
+    , testCase "tryAnyWithContext/pure"
+        testTryAnyWithContextPure
     , testCase "tryWithContext"
         testTryWithContext
+    , testCase "tryWithContext/pure"
+        testTryWithContextPure
     , testCase "tryWithoutContext"
         testTryWithoutContext
+    , testCase "tryWithoutContext/pure"
+        testTryWithoutContextPure
     , testCase "Throw and catch"
         testThrowAndCatch
     ]
@@ -119,6 +133,24 @@ testCatchAnyWithContext = do
     \ (ErrorWithContext _ctx someExn) -> do
       Just TestException @=? fromException someExn
 
+testCatchAnyWithContextPure :: Assertion
+testCatchAnyWithContextPure = do
+  catchAnyWithContext (runErrorContextT (throw TestException)) $
+    \ (ErrorWithContext _ctx someExn) -> do
+      Just TestException @=? fromException someExn
+
+testCatchAnyWithoutContext :: Assertion
+testCatchAnyWithoutContext = do
+  catchAnyWithoutContext (runErrorContextT (throwM TestException)) $
+    \ someExn -> do
+      Just TestException @=? fromException someExn
+
+testCatchAnyWithoutContextPure :: Assertion
+testCatchAnyWithoutContextPure = do
+  catchAnyWithoutContext (runErrorContextT (throw TestException)) $
+    \ someExn -> do
+      Just TestException @=? fromException someExn
+
 testNonContextualizedCatchWithContext :: Assertion
 testNonContextualizedCatchWithContext = do
   ErrorWithContext (ErrorContext ctx) TestException <- runErrorContextT $
@@ -156,11 +188,23 @@ testTryAnyWithContext = do
     pure ()
   Just TestException @=? fromException someExn
 
+testTryAnyWithContextPure :: Assertion
+testTryAnyWithContextPure = do
+  Left (ErrorWithContext _ctx someExn) <- tryAnyWithContext . runErrorContextT $
+    seq (throw TestException) (pure ())
+  Just TestException @=? fromException someExn
+
 testTryAnyWithoutContext :: Assertion
 testTryAnyWithoutContext = do
   Left someExn <- tryAnyWithoutContext . runErrorContextT $ do
     void $ throwM TestException
     pure ()
+  Just TestException @=? fromException someExn
+
+testTryAnyWithoutContextPure :: Assertion
+testTryAnyWithoutContextPure = do
+  Left someExn <- tryAnyWithoutContext . runErrorContextT $
+    seq (throw TestException) (pure ())
   Just TestException @=? fromException someExn
 
 testTryWithContext :: Assertion
@@ -170,11 +214,23 @@ testTryWithContext = do
     pure ()
   TestException @=? exn
 
+testTryWithContextPure :: Assertion
+testTryWithContextPure = do
+  Left (ErrorWithContext _ctx exn) <- tryWithContext . runErrorContextT $
+    seq (throw TestException) (pure ())
+  TestException @=? exn
+
 testTryWithoutContext :: Assertion
 testTryWithoutContext = do
   Left exn <- tryWithoutContext . runErrorContextT $ do
     void $ throwM TestException
     pure ()
+  TestException @=? exn
+
+testTryWithoutContextPure :: Assertion
+testTryWithoutContextPure = do
+  Left exn <- tryWithoutContext . runErrorContextT $
+    seq (throw TestException) (pure ())
   TestException @=? exn
 
 -- testTryAnyWithoutContext :: Assertion
