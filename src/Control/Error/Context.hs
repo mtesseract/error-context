@@ -96,7 +96,7 @@ runErrorContextT
   :: ErrorContextT m a
   -> m a
 runErrorContextT ctx =
-  runReaderT (_runErrorContextT ctx) (ErrorContext [])
+  runReaderT (_runErrorContextT ctx) mempty
 
 instance (MonadCatch m, MonadIO m) => MonadIO (ErrorContextT m) where
   liftIO m = do
@@ -154,7 +154,7 @@ catchWithContext m handler = catchJust pre m handler
               -- handler.
               case fromException someExn of
                 Just exn ->
-                  Just (ErrorWithContext (ErrorContext []) exn)
+                  Just (ErrorWithContext mempty exn)
                 Nothing ->
                   Nothing
 
@@ -232,6 +232,10 @@ instance MonadReader r m => MonadReader r (ErrorContextT m) where
 -- values.
 data ErrorContext = ErrorContext [Text] deriving (Show, Eq)
 
+instance Monoid ErrorContext where
+  mempty = ErrorContext []
+  (ErrorContext c1) `mappend` (ErrorContext c2) = ErrorContext (c1 <> c2)
+
 -- | Push a context layer (a 'Text') onto the provided 'ErrorContext'.
 errorContextPush
   :: Text
@@ -281,7 +285,7 @@ catchAnyWithContext m handler = catchJust pre m handler
             Just exn ->
               Just exn
             Nothing ->
-              Just (ErrorWithContext (ErrorContext []) someExn)
+              Just (ErrorWithContext mempty someExn)
 
 -- | Context aware version of 'catchAny'.
 catchAnyWithoutContext
