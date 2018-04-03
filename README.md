@@ -1,3 +1,5 @@
+# error-context [![Hackage version](https://img.shields.io/hackage/v/error-context.svg?label=Hackage)](https://hackage.haskell.org/package/error-context) [![Stackage version](https://www.stackage.org/package/error-context/badge/lts?label=Stackage)](https://www.stackage.org/package/error-context) [![Build Status](https://travis-ci.org/mtesseract/error-context.svg?branch=master)](https://travis-ci.org/mtesseract/error-context)
+
 # !! This is experimental work-in-progress !!
 
 Welcome to *error-context*! This is a library providing context-aware
