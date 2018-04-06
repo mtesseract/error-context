@@ -23,6 +23,7 @@ dependencies:
 - unliftio-core
 - resourcet
 - monad-logger
+- katip
 
 ghc-options:
 - -Wall

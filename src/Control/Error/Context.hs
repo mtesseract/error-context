@@ -23,7 +23,6 @@ Provides an API for enriching errors with contexts.
 module Control.Error.Context
   ( ErrorContext(..)
   , ErrorContextT
-  , MonadErrorContext(..)
   , ErrorWithContext(..)
   , runErrorContextT
   , errorContextualize
@@ -38,7 +37,8 @@ module Control.Error.Context
   , tryAnyWithoutContext
   , tryWithContext
   , tryWithoutContext
-  ) where
+  )
+  where
 
 import           Control.Exception.Safe       (SomeException (..), catchAny,
                                                catchJust)
@@ -49,33 +49,48 @@ import           Control.Monad.Reader
 import           Control.Monad.State
 import           Control.Monad.Trans.Resource
 import           Control.Monad.Writer
-import           Data.Text                    (Text)
 import qualified Data.Text                    as Text
 import           Data.Typeable
-
--- | Monad type class providing contextualized errors.
-class (Monad m, MonadThrow m) => MonadErrorContext m where
-  errorContextCollect :: m ErrorContext     -- ^ Return the current error context.
-  withErrorContext    :: Text -> m a -> m a -- ^ Execute a monadic action while having the
-                                            -- provided 'Text' being pushed to the error context.
-
--- | Data type implementing 'MonadErrorContext'.
-newtype ErrorContextT m a =
-  ErrorContextT { _runErrorContextT :: ReaderT ErrorContext m a
-                } deriving ( Functor
-                           , Applicative
-                           , Monad
-                           , MonadTrans
-                           , MonadState s
-                           , MonadWriter w )
+import           Katip
 
 -- | Boundles an error with an 'ErrorContext'.
 data ErrorWithContext e =
   ErrorWithContext ErrorContext e
-  deriving (Show)
+
+instance Show e => Show (ErrorWithContext e) where
+  show (ErrorWithContext _ctx e) = show e
 
 instance Functor ErrorWithContext where
   fmap f (ErrorWithContext ctx e) = ErrorWithContext ctx (f e)
+
+errorContextAsString :: ErrorContext -> String
+errorContextAsString ctx =
+  let layers = unNamespace (_errorContextNamespace ctx)
+  in concat $ map (\ layer -> "  caused by: " <> Text.unpack layer <> "\n") layers
+
+data ErrorContext =
+  ErrorContext { _errorContextKV        :: LogContexts
+               , _errorContextNamespace :: Namespace }
+
+instance Monoid ErrorContext where
+  mempty = ErrorContext mempty mempty
+  (ErrorContext kvs namespace) `mappend` (ErrorContext kvs' namespace') =
+    ErrorContext (kvs <> kvs') (namespace <> namespace')
+
+--------------------------------------------------------------------------------
+
+-- | Data type implementing 'MonadErrorContext'.
+newtype ErrorContextT m a =
+  ErrorContextT { _runErrorContextT :: m a
+                } deriving ( Functor
+                           , Applicative
+                           , Monad
+                           -- , MonadTrans
+                           , MonadState s
+                           , MonadWriter w )
+
+instance MonadTrans ErrorContextT where
+  lift = ErrorContextT
 
 -- | An @ErrorWithContext e@ can be used as an exception.
 instance Exception e => Exception (ErrorWithContext e) where
@@ -95,25 +110,30 @@ instance Exception e => Exception (ErrorWithContext e) where
 runErrorContextT
   :: ErrorContextT m a
   -> m a
-runErrorContextT ctx =
-  runReaderT (_runErrorContextT ctx) mempty
+runErrorContextT = _runErrorContextT
 
-instance (MonadCatch m, MonadIO m) => MonadIO (ErrorContextT m) where
+instance (MonadCatch m, KatipContext m, MonadIO m, Katip m) => Katip (ErrorContextT m) where
+  getLogEnv = ErrorContextT getLogEnv
+  localLogEnv f (ErrorContextT m) = ErrorContextT (localLogEnv f m)
+
+instance (MonadCatch m, KatipContext m) => KatipContext (ErrorContextT m) where
+  getKatipContext = ErrorContextT getKatipContext
+  localKatipContext f (ErrorContextT m) = ErrorContextT (localKatipContext f m)
+  getKatipNamespace = ErrorContextT getKatipNamespace
+  localKatipNamespace f (ErrorContextT m) = ErrorContextT (localKatipNamespace f m)
+
+instance (KatipContext m, MonadCatch m, MonadIO m) => MonadIO (ErrorContextT m) where
   liftIO m = do
-    ctx <- errorContextCollect
+    context   <- lift getKatipContext
+    namespace <- lift getKatipNamespace
+    let ctx = ErrorContext context namespace
     lift $ errorContextualizeIO ctx m
 
     where errorContextualizeIO ctx io = liftIO $
             catchAny io $ \ (SomeException exn) -> throwM (ErrorWithContext ctx exn)
 
--- | Implement 'MonadErrorContext' for 'ErrorContextT'.
-instance MonadThrow m => MonadErrorContext (ErrorContextT m) where
-  errorContextCollect = ErrorContextT ask
-  withErrorContext layer (ErrorContextT m) =
-    ErrorContextT (local (errorContextPush layer) m)
-
 -- | Implement 'MonadThrow' for 'ErrorContextT'.
-instance MonadThrow m => MonadThrow (ErrorContextT m) where
+instance (KatipContext m, MonadCatch m) => MonadThrow (ErrorContextT m) where
   throwM e = do
     case fromException (toException e) :: Maybe (ErrorWithContext SomeException) of
       Just exnWithCtx ->
@@ -122,16 +142,24 @@ instance MonadThrow m => MonadThrow (ErrorContextT m) where
         ctx <- errorContextCollect
         lift $ throwM (ErrorWithContext ctx (SomeException e))
 
+errorContextCollect
+  :: KatipContext m
+  => m ErrorContext
+errorContextCollect = do
+  context   <- getKatipContext
+  namespace <- getKatipNamespace
+  pure $ ErrorContext context namespace
+
 -- | Implement 'MonadCatch' for 'ErrorContextT'.
-instance MonadCatch m => MonadCatch (ErrorContextT m) where
-  catch (ErrorContextT (ReaderT m)) c =
-    ErrorContextT . ReaderT $
-    \ r -> m r `catchWithoutContext` \ exn -> runReaderT (_runErrorContextT (c exn)) r
+instance (KatipContext m, MonadCatch m) => MonadCatch (ErrorContextT m) where
+  catch (ErrorContextT m) c =
+    ErrorContextT $
+    m `catchWithoutContext` \ exn -> _runErrorContextT (c exn)
 
 -- | Like 'catch', but the handler is required to be context-aware. Is
 -- also able to catch exceptions of type 'e' (without context).
 catchWithContext
-  :: (MonadCatch m, Exception e) -- , MonadErrorContext m)
+  :: (MonadCatch m, Exception e)
   => m a
   -> (ErrorWithContext e -> m a)
   -> m a
@@ -164,7 +192,7 @@ catchWithContext m handler = catchJust pre m handler
 -- the handler.
 catchWithoutContext
   :: forall a e m
-   . (MonadCatch m, Exception e) -- , MonadErrorContext m)
+   . (MonadCatch m, Exception e)
   => m a
   -> (e -> m a)
   -> m a
@@ -219,34 +247,14 @@ tryWithoutContext m =
   catchWithoutContext (Right `liftM` m) (return . Left)
 
 -- | Implement 'MonadResource' for 'ErrorContextT'.
-instance (MonadCatch m, MonadResource m) => MonadResource (ErrorContextT m) where
-  liftResourceT = lift . liftResourceT
+instance (KatipContext m, MonadCatch m, MonadResource m) => MonadResource (ErrorContextT m) where
+  liftResourceT = liftResourceT
 
 -- | Implement 'MonadReader' for 'ErrorContextT'.
 instance MonadReader r m => MonadReader r (ErrorContextT m) where
-  ask = ErrorContextT (lift ask)
-  local f (ErrorContextT (ReaderT m)) =
-    ErrorContextT (ReaderT (\ errCtx -> local f (m errCtx)))
-
--- | Encapsulates the error context — essentially a stack of 'Text'
--- values.
-data ErrorContext = ErrorContext [Text] deriving (Show, Eq)
-
-instance Monoid ErrorContext where
-  mempty = ErrorContext []
-  (ErrorContext c1) `mappend` (ErrorContext c2) = ErrorContext (c1 <> c2)
-
--- | Push a context layer (a 'Text') onto the provided 'ErrorContext'.
-errorContextPush
-  :: Text
-  -> ErrorContext
-  -> ErrorContext
-errorContextPush layer (ErrorContext layers) =
-  ErrorContext (layer : layers)
-
-errorContextAsString :: ErrorContext -> String
-errorContextAsString (ErrorContext layers) =
-  concat $ map (\ layer -> "  caused by: " <> Text.unpack layer <> "\n") layers
+  ask = ErrorContextT ask
+  local f (ErrorContextT m) =
+    ErrorContextT (local f m)
 
 -- | Dump an error with context to stdout.
 errorWithContextDump
@@ -259,11 +267,13 @@ errorWithContextDump (ErrorWithContext ctx err) = do
 
 -- | Enrich an error value with an error context.
 errorContextualize
-  :: MonadErrorContext m
+  :: KatipContext m
   => e
   -> m (ErrorWithContext e)
 errorContextualize e = do
-  ctx <- errorContextCollect
+  context <- getKatipContext
+  namespace <- getKatipNamespace
+  let ctx = ErrorContext context namespace
   pure $ ErrorWithContext ctx e
 
 -- | Forgets the context from an enriched error.
@@ -302,7 +312,7 @@ catchAnyWithoutContext m handler = catchJust pre m handler
             Nothing ->
               Just someExn
 
-ensureExceptionContext :: (MonadCatch m, MonadErrorContext m) => m a -> m a
+ensureExceptionContext :: (MonadCatch m, KatipContext m) => m a -> m a
 ensureExceptionContext m =
   catchAny m $ \ someExn ->
   case fromException someExn :: Maybe (ErrorWithContext SomeException) of
