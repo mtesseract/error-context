@@ -74,3 +74,4 @@ errorContextAsString ctx =
 -- | Monad type class providing contextualized errors.
 class (Monad m, MonadThrow m) => MonadErrorContext m where
   errorContextCollect :: m ErrorContext     -- ^ Return the current error context.
+  withErrorContext :: Text -> m a -> m a

@@ -21,8 +21,10 @@ Provides an API for enriching errors with contexts.
 {-# LANGUAGE UndecidableInstances       #-}
 
 module Control.Error.Context
-  ( ErrorContext(..)
-  , ErrorContextT(..)
+  ( MonadErrorContext(..)
+  , ErrorContext(..)
+  , ErrorContextT
+  , runErrorContextT
   , ErrorContextKatipT(..)
   , ErrorWithContext(..)
   , errorContextualize
@@ -50,7 +52,6 @@ import           Control.Monad.Catch             (Exception (..),
                                                   MonadCatch (..), throwM)
 import           Control.Monad.IO.Class
 import           Data.Monoid
-import           Katip
 
 --------------------------------------------------------------------------------
 
@@ -65,13 +66,11 @@ errorWithContextDump (ErrorWithContext ctx err) = do
 
 -- | Enrich an error value with an error context.
 errorContextualize
-  :: KatipContext m
+  :: MonadErrorContext m
   => e
   -> m (ErrorWithContext e)
 errorContextualize e = do
-  context <- getKatipContext
-  namespace <- getKatipNamespace
-  let ctx = ErrorContext context (unNamespace namespace)
+  ctx <- errorContextCollect
   pure $ ErrorWithContext ctx e
 
 ensureExceptionContext :: (MonadCatch m, MonadErrorContext m) => m a -> m a

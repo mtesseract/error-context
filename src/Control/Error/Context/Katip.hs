@@ -83,6 +83,8 @@ instance (MonadCatch m, KatipContext m) => MonadErrorContext (ErrorContextKatipT
     context   <- lift getKatipContext
     namespace <- lift getKatipNamespace
     pure $ ErrorContext context (unNamespace namespace)
+  withErrorContext label =
+    katipAddNamespace (Namespace [label])
 
 instance (KatipContext m, MonadCatch m) => MonadCatch (ErrorContextKatipT m) where
   catch (ErrorContextKatipT m) c =

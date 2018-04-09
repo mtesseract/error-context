@@ -18,7 +18,10 @@ Portability : POSIX
 {-# LANGUAGE ScopedTypeVariables        #-}
 {-# LANGUAGE UndecidableInstances       #-}
 
-module Control.Error.Context.Simple (ErrorContextT(..)) where
+module Control.Error.Context.Simple
+  ( ErrorContextT(..)
+  , runErrorContextT
+  ) where
 
 import           Control.Error.Context.Types
 
@@ -32,16 +35,21 @@ import           Control.Monad.Reader
 import           Control.Monad.State
 import           Control.Monad.Trans.Resource
 import           Control.Monad.Writer
+import           Data.Text                       (Text)
 
 -- | Data type implementing 'MonadErrorContext'.
 newtype ErrorContextT m a =
-  ErrorContextT { runErrorContextT :: ReaderT ErrorContext m a
+  ErrorContextT { _runErrorContextT :: ReaderT ErrorContext m a
                 } deriving ( Functor
                            , Applicative
                            , Monad
                            , MonadTrans
                            , MonadState s
                            , MonadWriter w )
+
+runErrorContextT :: ErrorContextT m a -> m a
+runErrorContextT =
+  flip runReaderT mempty . _runErrorContextT
 
 instance (MonadCatch m, MonadIO m) => MonadIO (ErrorContextT m) where
   liftIO m = do
@@ -60,13 +68,19 @@ instance (MonadCatch m) => MonadThrow (ErrorContextT m) where
         ctx <- errorContextCollect
         lift $ throwM (ErrorWithContext ctx (SomeException e))
 
+errorContextPush :: Text -> ErrorContext -> ErrorContext
+errorContextPush label ctx =
+  ctx { _errorContextNamespace = _errorContextNamespace ctx ++ [label] }
+
 instance (MonadCatch m) => MonadErrorContext (ErrorContextT m) where
   errorContextCollect = ErrorContextT ask
+  withErrorContext layer (ErrorContextT m) =
+    ErrorContextT (local (errorContextPush layer) m)
 
 instance (MonadCatch m) => MonadCatch (ErrorContextT m) where
   catch (ErrorContextT m) c =
     ErrorContextT $
-    m `catchWithoutContext` \ exn -> runErrorContextT (c exn)
+    m `catchWithoutContext` \ exn -> _runErrorContextT (c exn)
 
 instance (MonadCatch m, MonadResource m) => MonadResource (ErrorContextT m) where
   liftResourceT = liftResourceT
