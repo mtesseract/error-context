@@ -26,6 +26,7 @@ dependencies:
 - katip
 - aeson
 - unordered-containers
+- bytestring
 
 ghc-options:
 - -Wall

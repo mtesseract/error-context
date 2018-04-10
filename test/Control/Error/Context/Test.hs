@@ -26,12 +26,16 @@ tests :: TestTree
 tests = testGroup "Tests" $
   [ testGroup "Simple (ErrorContextT)" (testsWithConf testConfSimple)
   , testGroup "Katip (ErrorContextKatipT)" (testsWithConf testConfKatip)
+  , testGroup "Test Examples" testExamples
   ]
+
+testExamples :: [TestTree]
+testExamples = 
+  [ testCase "simpleExample" testExample ]
 
 testsWithConf :: TestConf -> [TestTree]
 testsWithConf conf =
-    [
-      testCase "Contextualize IO Exception"
+    [ testCase "Contextualize IO Exception"
         (testContextualizeIOException conf)
     , testCase "throwM"
         (testThrow conf)
@@ -103,10 +107,6 @@ testConfSimple :: TestConf
 testConfSimple =
   TestConf { runStackT = runErrorContextT }
 
-extractNamespace :: ErrorContext -> [Text]
-extractNamespace (ErrorContext _kvs namespace) =
-  reverse namespace
-
 extractKVs :: ErrorContext -> HashMap Text Value
 extractKVs (ErrorContext kvs _namespace) =
   kvs
@@ -117,7 +117,7 @@ testContextualizeIOException TestConf { .. } = do
     withErrorNamespace "A" $
     withErrorNamespace "B" $
     liftIO failingIOException
-  ["B", "A"] @=? extractNamespace ctx
+  ["A", "B"] @=? errorContextNamespace ctx
 
   where failingIOException :: IO ()
         failingIOException =
@@ -144,7 +144,7 @@ testContextualizeErrorValue TestConf { .. } = do
     withErrorNamespace "A" $
     withErrorNamespace "B" $
     errorContextualize TestException
-  ["B", "A"] @=? extractNamespace ctx
+  ["A", "B"] @=? errorContextNamespace ctx
 
 testForgetErrorContext :: TestConf -> Assertion
 testForgetErrorContext TestConf { .. } = do
@@ -198,7 +198,7 @@ testNonContextualizedCatchWithContext TestConf { .. } = do
     withErrorNamespace "B" $ do
     catchWithContext throwPureException $ \ (exn :: ErrorWithContext TestException) -> do
       pure exn
-  [] @=? extractNamespace ctx
+  [] @=? errorContextNamespace ctx
 
   where throwPureException = throw TestException
 
@@ -211,7 +211,7 @@ testEnsureExceptionContext TestConf { .. } = do
       throw TestException
   let Just (ErrorWithContext ctx someExnWithoutCtx) = fromException someExn
   Just TestException @=? fromException someExnWithoutCtx
-  ["B", "A"] @=? extractNamespace ctx
+  ["A", "B"] @=? errorContextNamespace ctx
 
 testCatchHeadException :: TestConf -> Assertion
 testCatchHeadException TestConf { .. } = do
@@ -289,10 +289,19 @@ testContextKvOverwrite TestConf { .. } = do
     withErrorContext "ultimate-answer" answer $
     withErrorContext "ultimate-answer" answer' $
     throwM TestException
-  HashMap.fromList [("ultimate-answer", toJSON answer')] @=? extractKVs ctx
+  HashMap.fromList [("ultimate-answer", toJSON answer')] @=? errorContextKVs ctx
 
   where answer :: Int
         answer = 42
 
         answer' :: Int
         answer' = 0
+
+testExample :: IO ()
+testExample = do
+  Left errWithCtx <- tryAnyWithContext . runErrorContextT $
+    withErrorNamespace "middle-earth" $
+    withErrorNamespace "mordor" $
+    withErrorContext "ring-carrier" ("Frodo" :: Text) $
+      throwM TestException
+  putStrLn . displayException $ errWithCtx

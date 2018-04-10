@@ -28,14 +28,16 @@ module Control.Error.Context.Types
   ) where
 
 import           Control.Exception
-import           Control.Monad.Catch (MonadThrow)
+import           Control.Monad.Catch  (MonadThrow)
 import           Data.Aeson
-import           Data.Function       ((&))
-import           Data.HashMap.Strict (HashMap)
-import qualified Data.HashMap.Strict as HashMap
+import qualified Data.ByteString.Lazy as ByteString.Lazy
+import           Data.Function        ((&))
+import           Data.HashMap.Strict  (HashMap)
+import qualified Data.HashMap.Strict  as HashMap
 import           Data.Monoid
-import           Data.Text           (Text)
-import qualified Data.Text           as Text
+import           Data.Text            (Text)
+import qualified Data.Text            as Text
+import qualified Data.Text.Encoding   as Text
 import           Data.Typeable
 
 -- | Boundles an error with an 'ErrorContext'.
@@ -78,8 +80,13 @@ errorContextAsString (ErrorContext hashmap layers) =
           hashmap
           & HashMap.toList
           & (map $ \ (label, val) ->
-                     let labelS = Text.unpack label
-                         valS   = show val
+                     let labelS = label
+                                  & Text.unpack
+                         valS   = val
+                                  & encode
+                                  & ByteString.Lazy.toStrict
+                                  & Text.decodeUtf8
+                                  & Text.unpack
                      in "           " <> labelS <> ": " <> valS <> "\n")
 
         prettyPrintCauses =
