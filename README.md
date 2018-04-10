@@ -3,7 +3,12 @@
 # !! This is experimental work-in-progress !!
 
 Welcome to *error-context*! This is a library providing context-aware
-error and exception handling for Haskell.
+error and exception handling for Haskell. It has built-in support for
+the [Katip logging
+package](https://hackage.haskell.org/package/katip). This means that
+in combination with Katip, *error-context* can transparently use the
+context (key-value pairs and namespace hierarchy) maintained by
+`KatipContext` monads.
 
 ## What problem does *error-context* attempt to solve?
 
@@ -28,7 +33,30 @@ via special implementations of `MonadThrow`, `MonadCatch` and
 
 ## Examples
 
-See https://github.com/mtesseract/error-context/blob/master/test/Control/Error/Context/Test.hs.
+Consider this IO action:
+
+```haskell
+testExample :: IO ()
+testExample = do
+  Left errWithCtx <- tryAnyWithContext . runErrorContextT $ do
+    withErrorNamespace "middle-earth" $
+      withErrorNamespace "mordor" $
+      withErrorContext "ring-carrier" ("Frodo" :: Text) $ 
+      throwM TestException
+  putStrLn . displayException $ errWithCtx
+```
+
+When run, it produces the following output:
+
+```
+Exception: TestException
+           ring-carrier: "Frodo"
+  caused by: middle-earth
+  caused by: mordor
+```
+
+For more examples, see
+https://github.com/mtesseract/error-context/blob/master/test/Control/Error/Context/Test.hs.
 
 ## What about "pure" exceptions?
 
