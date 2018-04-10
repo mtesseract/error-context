@@ -91,6 +91,7 @@ errorContextAsString (ErrorContext hashmap layers) =
 
         prettyPrintCauses =
           layers
+          & reverse
           & (map $ \ layer ->
                      let layerS = Text.unpack layer
                      in "  caused by: " <> layerS <> "\n")
