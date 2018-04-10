@@ -51,8 +51,8 @@ When run, it produces the following output:
 ```
 Exception: TestException
            ring-carrier: "Frodo"
-  caused by: middle-earth
   caused by: mordor
+  caused by: middle-earth
 ```
 
 For more examples, see
