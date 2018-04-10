@@ -39,8 +39,7 @@ module Control.Error.Context
   , tryAnyWithoutContext
   , tryWithContext
   , tryWithoutContext
-  )
-  where
+  ) where
 
 import           Control.Error.Context.Katip
 import           Control.Error.Context.Simple
@@ -73,7 +72,10 @@ errorContextualize e = do
   ctx <- errorContextCollect
   pure $ ErrorWithContext ctx e
 
-ensureExceptionContext :: (MonadCatch m, MonadErrorContext m) => m a -> m a
+ensureExceptionContext
+  :: (MonadCatch m, MonadErrorContext m)
+  => m a
+  -> m a
 ensureExceptionContext m =
   catchAny m $ \ someExn ->
   case fromException someExn :: Maybe (ErrorWithContext SomeException) of

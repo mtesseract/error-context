@@ -29,11 +29,14 @@ module Control.Error.Context.Types
 
 import           Control.Exception
 import           Control.Monad.Catch (MonadThrow)
+import           Data.Aeson
+import           Data.Function       ((&))
+import           Data.HashMap.Strict (HashMap)
+import qualified Data.HashMap.Strict as HashMap
 import           Data.Monoid
 import           Data.Text           (Text)
 import qualified Data.Text           as Text
 import           Data.Typeable
-import           Katip
 
 -- | Boundles an error with an 'ErrorContext'.
 data ErrorWithContext e =
@@ -46,8 +49,8 @@ instance Functor ErrorWithContext where
   fmap f (ErrorWithContext ctx e) = ErrorWithContext ctx (f e)
 
 data ErrorContext =
-  ErrorContext { _errorContextKV        :: LogContexts
-               , _errorContextNamespace :: [Text] }
+  ErrorContext { errorContextKVs       :: HashMap Text Value
+               , errorContextNamespace :: [Text] }
 
 instance Monoid ErrorContext where
   mempty = ErrorContext mempty mempty
@@ -63,15 +66,30 @@ instance Exception e => Exception (ErrorWithContext e) where
         Just exnWithCtx
       Nothing ->
         Nothing
-  displayException (ErrorWithContext ctx exn) = do
-    "Exception: " <> displayException exn <> "\n" <> errorContextAsString ctx
+  displayException (ErrorWithContext ctx exn) =
+    "Exception: " <> displayException exn <> "\n"
+    <> errorContextAsString ctx
 
 errorContextAsString :: ErrorContext -> String
-errorContextAsString ctx =
-  let layers = _errorContextNamespace ctx
-  in concat $ map (\ layer -> "  caused by: " <> Text.unpack layer <> "\n") layers
+errorContextAsString (ErrorContext hashmap layers) =
+  concat $ prettyPrintKvs ++ prettyPrintCauses
+
+  where prettyPrintKvs =
+          hashmap
+          & HashMap.toList
+          & (map $ \ (label, val) ->
+                     let labelS = Text.unpack label
+                         valS   = show val
+                     in "           " <> labelS <> ": " <> valS <> "\n")
+
+        prettyPrintCauses =
+          layers
+          & (map $ \ layer ->
+                     let layerS = Text.unpack layer
+                     in "  caused by: " <> layerS <> "\n")
 
 -- | Monad type class providing contextualized errors.
 class (Monad m, MonadThrow m) => MonadErrorContext m where
   errorContextCollect :: m ErrorContext     -- ^ Return the current error context.
-  withErrorContext :: Text -> m a -> m a
+  withErrorContext :: ToJSON v => Text -> v -> m a -> m a
+  withErrorNamespace :: Text -> m a -> m a

@@ -24,6 +24,7 @@ module Control.Error.Context.Simple
   ) where
 
 import           Control.Error.Context.Types
+import           Data.Aeson
 
 import           Control.Error.Context.Exception
 import           Control.Exception.Safe          (SomeException (..), catchAny)
@@ -35,6 +36,7 @@ import           Control.Monad.Reader
 import           Control.Monad.State
 import           Control.Monad.Trans.Resource
 import           Control.Monad.Writer
+import qualified Data.HashMap.Strict             as HashMap
 import           Data.Text                       (Text)
 
 -- | Data type implementing 'MonadErrorContext'.
@@ -68,14 +70,22 @@ instance (MonadCatch m) => MonadThrow (ErrorContextT m) where
         ctx <- errorContextCollect
         lift $ throwM (ErrorWithContext ctx (SomeException e))
 
-errorContextPush :: Text -> ErrorContext -> ErrorContext
-errorContextPush label ctx =
-  ctx { _errorContextNamespace = _errorContextNamespace ctx ++ [label] }
+errorNamespacePush :: Text -> ErrorContext -> ErrorContext
+errorNamespacePush label ctx =
+  let currentNamespace = errorContextNamespace ctx
+  in ctx { errorContextNamespace = currentNamespace ++ [label] }
+
+errorContextAdd :: Text -> Value -> ErrorContext -> ErrorContext
+errorContextAdd label val ctx =
+  let currentKVs = errorContextKVs ctx
+  in ctx { errorContextKVs = HashMap.insert label val currentKVs }
 
 instance (MonadCatch m) => MonadErrorContext (ErrorContextT m) where
   errorContextCollect = ErrorContextT ask
-  withErrorContext layer (ErrorContextT m) =
-    ErrorContextT (local (errorContextPush layer) m)
+  withErrorNamespace layer (ErrorContextT m) =
+    ErrorContextT (local (errorNamespacePush layer) m)
+  withErrorContext label val (ErrorContextT m) =
+    ErrorContextT (local (errorContextAdd label (toJSON val)) m)
 
 instance (MonadCatch m) => MonadCatch (ErrorContextT m) where
   catch (ErrorContextT m) c =

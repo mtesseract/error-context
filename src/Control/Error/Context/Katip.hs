@@ -22,9 +22,8 @@ Provides an API for enriching errors with contexts.
 
 module Control.Error.Context.Katip (ErrorContextKatipT(..)) where
 
-import           Control.Error.Context.Types
-
 import           Control.Error.Context.Exception
+import           Control.Error.Context.Types
 import           Control.Exception.Safe          (SomeException (..), catchAny)
 import           Control.Monad.Catch             (Exception (..),
                                                   MonadCatch (..), MonadThrow,
@@ -61,7 +60,7 @@ instance (MonadCatch m, KatipContext m) => KatipContext (ErrorContextKatipT m) w
 
 instance (KatipContext m, MonadCatch m, MonadIO m) => MonadIO (ErrorContextKatipT m) where
   liftIO m = do
-    context   <- lift getKatipContext
+    context   <- toObject <$> lift getKatipContext
     namespace <- lift getKatipNamespace
     let ctx = ErrorContext context (unNamespace namespace)
     lift $ errorContextualizeIO ctx m
@@ -80,11 +79,13 @@ instance (KatipContext m, MonadCatch m) => MonadThrow (ErrorContextKatipT m) whe
 
 instance (MonadCatch m, KatipContext m) => MonadErrorContext (ErrorContextKatipT m) where
   errorContextCollect = do
-    context   <- lift getKatipContext
+    context   <- toObject <$> lift getKatipContext
     namespace <- lift getKatipNamespace
     pure $ ErrorContext context (unNamespace namespace)
-  withErrorContext label =
+  withErrorNamespace label =
     katipAddNamespace (Namespace [label])
+  withErrorContext label val =
+    katipAddContext (sl label val)
 
 instance (KatipContext m, MonadCatch m) => MonadCatch (ErrorContextKatipT m) where
   catch (ErrorContextKatipT m) c =

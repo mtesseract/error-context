@@ -9,11 +9,14 @@
 
 module Control.Error.Context.Test (tests) where
 
+import Data.Aeson
 import           Control.Error.Context
 import           Control.Exception           (Exception (..), throw, throwIO)
 import           Control.Monad
 import           Control.Monad.Catch         (MonadCatch, catch, throwM, try)
 import           Control.Monad.IO.Class
+import qualified Data.HashMap.Strict as HashMap
+import Data.HashMap.Strict (HashMap)
 import           Data.Text                   (Text)
 import           Katip
 import           Test.Tasty
@@ -74,6 +77,10 @@ testsWithConf conf =
         (testTryWithoutContextPure conf)
     , testCase "Throw and catch"
         (testThrowAndCatch conf)
+    , testCase "contextKvRetrieval"
+        (testContextKv conf)
+    , testCase "contextKvOverwrite"
+        (testContextKvOverwrite conf)
     ]
 
 data TestException = TestException deriving (Show, Eq)
@@ -100,11 +107,15 @@ extractNamespace :: ErrorContext -> [Text]
 extractNamespace (ErrorContext _kvs namespace) =
   reverse namespace
 
+extractKVs :: ErrorContext -> HashMap Text Value
+extractKVs (ErrorContext kvs _namespace) =
+  kvs
+
 testContextualizeIOException :: TestConf -> Assertion
 testContextualizeIOException TestConf { .. } = do
   Left (ErrorWithContext ctx TestException) <- try . runStackT $
-    withErrorContext "A" $
-    withErrorContext "B" $
+    withErrorNamespace "A" $
+    withErrorNamespace "B" $
     liftIO failingIOException
   ["B", "A"] @=? extractNamespace ctx
 
@@ -121,8 +132,8 @@ testThrow TestConf { .. } = do
 testCatchWithoutContext :: TestConf -> Assertion
 testCatchWithoutContext TestConf { .. } = do
   TestException <- runStackT $
-    withErrorContext "A" $
-    withErrorContext "B" $
+    withErrorNamespace "A" $
+    withErrorNamespace "B" $
     catchWithoutContext (throwM TestException) $ \ (exn :: TestException) -> do
       pure exn
   pure ()
@@ -130,24 +141,24 @@ testCatchWithoutContext TestConf { .. } = do
 testContextualizeErrorValue :: TestConf -> Assertion
 testContextualizeErrorValue TestConf { .. } = do
   ErrorWithContext ctx TestException <- runStackT $
-    withErrorContext "A" $
-    withErrorContext "B" $
+    withErrorNamespace "A" $
+    withErrorNamespace "B" $
     errorContextualize TestException
   ["B", "A"] @=? extractNamespace ctx
 
 testForgetErrorContext :: TestConf -> Assertion
 testForgetErrorContext TestConf { .. } = do
   errWithCtx @ (ErrorWithContext _ctx TestException) <- runStackT $
-    withErrorContext "A" $
-    withErrorContext "B" $
+    withErrorNamespace "A" $
+    withErrorNamespace "B" $
     errorContextualize TestException
   TestException @=? errorContextForget errWithCtx
 
 testDumpErrorContext :: TestConf -> Assertion
 testDumpErrorContext TestConf { .. } = do
   errWithCtx @ (ErrorWithContext _ctx _exn) <- runStackT $
-    withErrorContext "A" $
-    withErrorContext "B" $
+    withErrorNamespace "A" $
+    withErrorNamespace "B" $
     errorContextualize TestException
   errorWithContextDump errWithCtx
 
@@ -183,8 +194,8 @@ testCatchAnyWithoutContextPure TestConf { .. } = do
 testNonContextualizedCatchWithContext :: TestConf -> Assertion
 testNonContextualizedCatchWithContext TestConf { .. } = do
   ErrorWithContext ctx TestException <- runStackT $
-    withErrorContext "A" $
-    withErrorContext "B" $ do
+    withErrorNamespace "A" $
+    withErrorNamespace "B" $ do
     catchWithContext throwPureException $ \ (exn :: ErrorWithContext TestException) -> do
       pure exn
   [] @=? extractNamespace ctx
@@ -194,8 +205,8 @@ testNonContextualizedCatchWithContext TestConf { .. } = do
 testEnsureExceptionContext :: TestConf -> Assertion
 testEnsureExceptionContext TestConf { .. } = do
   Left someExn <- try . runStackT $
-    withErrorContext "A" $
-    withErrorContext "B" $ do
+    withErrorNamespace "A" $
+    withErrorNamespace "B" $ do
     ensureExceptionContext $ do
       throw TestException
   let Just (ErrorWithContext ctx someExnWithoutCtx) = fromException someExn
@@ -205,7 +216,7 @@ testEnsureExceptionContext TestConf { .. } = do
 testCatchHeadException :: TestConf -> Assertion
 testCatchHeadException TestConf { .. } = do
   Left errWithCtx <- tryAnyWithContext . runStackT $ do
-    withErrorContext "Here I am, calling head on an empty list!" $
+    withErrorNamespace "Here I am, calling head on an empty list!" $
       ensureExceptionContext $ seq (head []) (pure ())
   let (ErrorWithContext _ctx _exnWithoutCtx) = errWithCtx
   putStrLn . displayException $ errWithCtx
@@ -261,3 +272,27 @@ testTryWithoutContextPure TestConf { .. } = do
   Left exn <- tryWithoutContext . runStackT $
     seq (throw TestException) (pure ())
   TestException @=? exn
+
+testContextKv :: TestConf -> Assertion
+testContextKv TestConf { .. } = do
+  Left (ErrorWithContext ctx TestException) <- tryWithContext . runStackT $
+    withErrorContext "ultimate-answer" answer $
+    throwM TestException
+  HashMap.fromList [("ultimate-answer", toJSON answer)] @=? extractKVs ctx
+
+  where answer :: Int
+        answer = 42
+
+testContextKvOverwrite :: TestConf -> Assertion
+testContextKvOverwrite TestConf { .. } = do
+  Left (ErrorWithContext ctx TestException) <- tryWithContext . runStackT $
+    withErrorContext "ultimate-answer" answer $
+    withErrorContext "ultimate-answer" answer' $
+    throwM TestException
+  HashMap.fromList [("ultimate-answer", toJSON answer')] @=? extractKVs ctx
+
+  where answer :: Int
+        answer = 42
+
+        answer' :: Int
+        answer' = 0

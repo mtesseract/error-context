@@ -1,5 +1,5 @@
 name:                error-context
-version:             0.1.2.0
+version:             0.2.0.0
 github:              "mtesseract/error-context"
 license:             BSD3
 author:              "Moritz Clasmeier"
@@ -24,6 +24,8 @@ dependencies:
 - resourcet
 - monad-logger
 - katip
+- aeson
+- unordered-containers
 
 ghc-options:
 - -Wall
@@ -45,3 +47,4 @@ tests:
     - tasty
     - tasty-hunit
     - safe-exceptions
+    - aeson
