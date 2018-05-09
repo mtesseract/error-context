@@ -21,23 +21,28 @@ Portability : POSIX
 module Control.Error.Context.Simple
   ( ErrorContextT(..)
   , runErrorContextT
-  ) where
+  )
+where
 
 import           Control.Error.Context.Types
 import           Data.Aeson
 
 import           Control.Error.Context.Exception
-import           Control.Exception.Safe          (SomeException (..), catchAny)
-import           Control.Monad.Catch             (Exception (..),
-                                                  MonadCatch (..), MonadThrow,
-                                                  throwM)
+import           Control.Exception.Safe         ( SomeException(..)
+                                                , catchAny
+                                                )
+import           Control.Monad.Catch            ( Exception(..)
+                                                , MonadCatch(..)
+                                                , MonadThrow
+                                                , throwM
+                                                )
 import           Control.Monad.IO.Unlift
 import           Control.Monad.Reader
 import           Control.Monad.State
 import           Control.Monad.Trans.Resource
 import           Control.Monad.Writer
-import qualified Data.HashMap.Strict             as HashMap
-import           Data.Text                       (Text)
+import qualified Data.HashMap.Strict           as HashMap
+import           Data.Text                      ( Text )
 
 -- | Data type implementing 'MonadErrorContext'.
 newtype ErrorContextT m a =
@@ -50,8 +55,7 @@ newtype ErrorContextT m a =
                            , MonadWriter w )
 
 runErrorContextT :: ErrorContextT m a -> m a
-runErrorContextT =
-  flip runReaderT mempty . _runErrorContextT
+runErrorContextT = flip runReaderT mempty . _runErrorContextT
 
 instance (MonadCatch m, MonadIO m) => MonadIO (ErrorContextT m) where
   liftIO m = do
@@ -62,7 +66,7 @@ instance (MonadCatch m, MonadIO m) => MonadIO (ErrorContextT m) where
             catchAny io $ \ (SomeException exn) -> throwM (ErrorWithContext ctx exn)
 
 instance (MonadCatch m) => MonadThrow (ErrorContextT m) where
-  throwM e = do
+  throwM e =
     case fromException (toException e) :: Maybe (ErrorWithContext SomeException) of
       Just exnWithCtx ->
         lift $ throwM exnWithCtx
@@ -99,3 +103,9 @@ instance MonadReader r m => MonadReader r (ErrorContextT m) where
   ask = ErrorContextT (lift ask)
   local f (ErrorContextT (ReaderT m)) =
     ErrorContextT (ReaderT (\ errCtx -> local f (m errCtx)))
+
+instance (MonadUnliftIO m, MonadCatch m) => MonadUnliftIO (ErrorContextT m) where
+  askUnliftIO = do
+    env <- ErrorContextT ask
+    unlifter <- lift askUnliftIO
+    pure $ UnliftIO (\ (ErrorContextT ec) -> unliftIO unlifter (runReaderT ec env))

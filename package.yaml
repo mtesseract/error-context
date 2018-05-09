@@ -1,5 +1,5 @@
 name:                error-context
-version:             0.2.0.1
+version:             0.2.1.0
 github:              "mtesseract/error-context"
 license:             BSD3
 author:              "Moritz Clasmeier"
@@ -39,7 +39,6 @@ tests:
     main:                Spec.hs
     source-dirs:         test
     ghc-options:
-    - -g
     - -threaded
     - -rtsopts
     - -with-rtsopts=-N
