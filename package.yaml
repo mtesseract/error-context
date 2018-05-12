@@ -19,7 +19,6 @@ dependencies:
 - mtl
 - text
 - exceptions
-- safe-exceptions
 - unliftio-core
 - resourcet
 - monad-logger
@@ -41,7 +40,6 @@ tests:
     ghc-options:
     - -threaded
     - -rtsopts
-    - -with-rtsopts=-N
     dependencies:
     - error-context
     - tasty

@@ -20,14 +20,22 @@ Provides an API for enriching errors with contexts.
 {-# LANGUAGE ScopedTypeVariables        #-}
 {-# LANGUAGE UndecidableInstances       #-}
 
-module Control.Error.Context.Katip (ErrorContextKatipT(..)) where
+module Control.Error.Context.Katip
+  ( ErrorContextKatipT(..)
+  , MonadCatchRaw
+  )
+where
 
 import           Control.Error.Context.Exception
 import           Control.Error.Context.Types
-import           Control.Exception.Safe          (SomeException (..), catchAny)
-import           Control.Monad.Catch             (Exception (..),
-                                                  MonadCatch (..), MonadThrow,
-                                                  throwM)
+import           Control.Monad.Catch            ( Exception(..)
+                                                , SomeException(..)
+                                                , MonadCatch(..)
+                                                , MonadThrow
+                                                , throwM
+                                                , catches
+                                                , Handler(..)
+                                                )
 import           Control.Monad.IO.Unlift
 import           Control.Monad.Reader
 import           Control.Monad.State
@@ -66,16 +74,10 @@ instance (KatipContext m, MonadCatch m, MonadIO m) => MonadIO (ErrorContextKatip
     lift $ errorContextualizeIO ctx m
 
     where errorContextualizeIO ctx io = liftIO $
-            catchAny io $ \ (SomeException exn) -> throwM (ErrorWithContext ctx exn)
+            catch io $ \ (SomeException exn) -> throwM (ErrorWithContext ctx exn)
 
 instance (KatipContext m, MonadCatch m) => MonadThrow (ErrorContextKatipT m) where
-  throwM e = do
-    case fromException (toException e) :: Maybe (ErrorWithContext SomeException) of
-      Just exnWithCtx ->
-        lift $ throwM exnWithCtx
-      Nothing -> do
-        ctx <- errorContextCollect
-        lift $ throwM (ErrorWithContext ctx (SomeException e))
+  throwM = throwWithContext
 
 instance (MonadCatch m, KatipContext m) => MonadErrorContext (ErrorContextKatipT m) where
   errorContextCollect = do
@@ -88,9 +90,11 @@ instance (MonadCatch m, KatipContext m) => MonadErrorContext (ErrorContextKatipT
     katipAddContext (sl label val)
 
 instance (KatipContext m, MonadCatch m) => MonadCatch (ErrorContextKatipT m) where
-  catch (ErrorContextKatipT m) c =
-    ErrorContextKatipT $
-    m `catchWithoutContext` \ exn -> runErrorContextKatipT (c exn)
+  catch (ErrorContextKatipT m) f = ErrorContextKatipT $
+    catches m
+    [ Handler $ \(ErrorWithContext _ctx exn :: ErrorWithContext e) -> runErrorContextKatipT (f exn)
+    , Handler $ \(exn :: e) -> runErrorContextKatipT (f exn)
+    ]
 
 instance (KatipContext m, MonadCatch m, MonadResource m) => MonadResource (ErrorContextKatipT m) where
   liftResourceT = liftResourceT
@@ -99,3 +103,7 @@ instance MonadReader r m => MonadReader r (ErrorContextKatipT m) where
   ask = ErrorContextKatipT ask
   local f (ErrorContextKatipT m) =
     ErrorContextKatipT (local f m)
+
+instance (MonadCatch m) => MonadCatchRaw (ErrorContextKatipT m) where
+  catchRaw (ErrorContextKatipT m) f = ErrorContextKatipT $
+    catch m (runErrorContextKatipT . f)

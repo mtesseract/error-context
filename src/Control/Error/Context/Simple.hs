@@ -25,16 +25,18 @@ module Control.Error.Context.Simple
 where
 
 import           Control.Error.Context.Types
+import           Data.Typeable
 import           Data.Aeson
 
 import           Control.Error.Context.Exception
-import           Control.Exception.Safe         ( SomeException(..)
-                                                , catchAny
-                                                )
+
 import           Control.Monad.Catch            ( Exception(..)
+                                                , Handler(..)
                                                 , MonadCatch(..)
+                                                , SomeException(..)
                                                 , MonadThrow
                                                 , throwM
+                                                , catches
                                                 )
 import           Control.Monad.IO.Unlift
 import           Control.Monad.Reader
@@ -63,26 +65,20 @@ instance (MonadCatch m, MonadIO m) => MonadIO (ErrorContextT m) where
     lift $ errorContextualizeIO ctx m
 
     where errorContextualizeIO ctx io = liftIO $
-            catchAny io $ \ (SomeException exn) -> throwM (ErrorWithContext ctx exn)
+            catch io $ \ (SomeException exn) -> throwM (ErrorWithContext ctx exn)
 
 instance (MonadCatch m) => MonadThrow (ErrorContextT m) where
-  throwM e =
-    case fromException (toException e) :: Maybe (ErrorWithContext SomeException) of
-      Just exnWithCtx ->
-        lift $ throwM exnWithCtx
-      Nothing -> do
-        ctx <- errorContextCollect
-        lift $ throwM (ErrorWithContext ctx (SomeException e))
+  throwM = throwWithContext
 
 errorNamespacePush :: Text -> ErrorContext -> ErrorContext
 errorNamespacePush label ctx =
   let currentNamespace = errorContextNamespace ctx
-  in ctx { errorContextNamespace = currentNamespace ++ [label] }
+  in  ctx { errorContextNamespace = currentNamespace ++ [label] }
 
 errorContextAdd :: Text -> Value -> ErrorContext -> ErrorContext
 errorContextAdd label val ctx =
   let currentKVs = errorContextKVs ctx
-  in ctx { errorContextKVs = HashMap.insert label val currentKVs }
+  in  ctx { errorContextKVs = HashMap.insert label val currentKVs }
 
 instance (MonadCatch m) => MonadErrorContext (ErrorContextT m) where
   errorContextCollect = ErrorContextT ask
@@ -92,9 +88,15 @@ instance (MonadCatch m) => MonadErrorContext (ErrorContextT m) where
     ErrorContextT (local (errorContextAdd label (toJSON val)) m)
 
 instance (MonadCatch m) => MonadCatch (ErrorContextT m) where
-  catch (ErrorContextT m) c =
-    ErrorContextT $
-    m `catchWithoutContext` \ exn -> _runErrorContextT (c exn)
+  catch (ErrorContextT m) f = ErrorContextT $
+    catches m
+    [ Handler $ \(ErrorWithContext _ctx exn :: ErrorWithContext e) -> _runErrorContextT (f exn)
+    , Handler $ \(exn :: e) -> _runErrorContextT (f exn)
+    ]
+
+instance (MonadCatch m) => MonadCatchRaw (ErrorContextT m) where
+  catchRaw (ErrorContextT m) f = ErrorContextT $
+    catch m (_runErrorContextT . f)
 
 instance (MonadCatch m, MonadResource m) => MonadResource (ErrorContextT m) where
   liftResourceT = liftResourceT
