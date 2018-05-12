@@ -53,6 +53,7 @@ instance Functor ErrorWithContext where
 data ErrorContext =
   ErrorContext { errorContextKVs       :: HashMap Text Value
                , errorContextNamespace :: [Text] }
+  deriving (Eq)
 
 instance Monoid ErrorContext where
   mempty = ErrorContext mempty mempty

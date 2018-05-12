@@ -11,7 +11,7 @@ module Control.Error.Context.Test (tests) where
 
 import Data.Aeson
 import           Control.Error.Context
-import           Control.Exception           (Exception (..), throw, throwIO)
+import           Control.Exception           (Exception (..), throw, throwIO, SomeException(..))
 import           Control.Monad
 import           Control.Monad.Catch         (MonadCatch, catch, throwM, try)
 import           Control.Monad.IO.Class
@@ -21,11 +21,16 @@ import           Data.Text                   (Text)
 import           Katip
 import           Test.Tasty
 import           Test.Tasty.HUnit
+import Data.Proxy
+import Data.Monoid
+import Data.Typeable
+import Control.Applicative
+import Data.Maybe
 
 tests :: TestTree
 tests = testGroup "Tests" $
   [ testGroup "Simple (ErrorContextT)" (testsWithConf testConfSimple)
-  , testGroup "Katip (ErrorContextKatipT)" (testsWithConf testConfKatip)
+  -- , testGroup "Katip (ErrorContextKatipT)" (testsWithConf testConfKatip)
   , testGroup "Test Examples" testExamples
   ]
 
@@ -85,6 +90,10 @@ testsWithConf conf =
         (testContextKv conf)
     , testCase "contextKvOverwrite"
         (testContextKvOverwrite conf)
+    , testCase "testRethrowKeepsExceptionUnchangedCatchAnyWithoutCtx"
+        (testRethrowKeepsExceptionUnchangedCatchAnyWithoutCtx conf)
+    -- , testCase "testRethrowKeepsExceptionUnchangedCatchAnyWithCtx"
+    --     (testRethrowKeepsExceptionUnchangedCatchAnyWithCtx conf)
     ]
 
 data TestException = TestException deriving (Show, Eq)
@@ -305,3 +314,168 @@ testExample = do
     withErrorContext "ring-carrier" ("Frodo" :: Text) $
       throwM TestException
   putStrLn . displayException $ errWithCtx
+
+structurallyEq
+  :: forall e e' p
+   . (Exception e, Exception e', Exception p)
+  => Proxy p
+  -> e
+  -> e'
+  -> Bool
+structurallyEq _proxy e e' = do
+  case (,) <$> (cast e :: Maybe p) <*> (cast e' :: Maybe p) of
+    Just (_, _) -> True
+    Nothing ->
+      case
+          (,)
+          <$> (cast e :: Maybe SomeException)
+          <*> (cast e' :: Maybe SomeException)
+        of
+          Just (SomeException f, SomeException f') ->
+            structurallyEq _proxy f f'
+          Nothing ->
+            case
+                (,)
+                <$> (cast e :: Maybe (ErrorWithContext p))
+                <*> (cast e' :: Maybe (ErrorWithContext p))
+              of
+                Just (ErrorWithContext ctx f, ErrorWithContext ctx' f') ->
+                  ctx == ctx' && structurallyEq _proxy f f'
+                Nothing ->
+                  case
+                      (,)
+                      <$> (cast e :: Maybe (ErrorWithContext SomeException))
+                      <*> (cast e' :: Maybe (ErrorWithContext SomeException))
+                    of
+                      Just (ErrorWithContext ctx (SomeException f), ErrorWithContext ctx' (SomeException f'))
+                        -> ctx == ctx' && structurallyEq _proxy f f'
+                      Nothing -> False
+
+testExceptionProxy :: Proxy TestException
+testExceptionProxy = Proxy
+
+testRethrowKeepsExceptionUnchangedCatchAnyWithCtx :: TestConf -> Assertion
+testRethrowKeepsExceptionUnchangedCatchAnyWithCtx TestConf {..} = do
+  let referenceExn =
+        SomeException (ErrorWithContext (ErrorContext HashMap.empty ["A"]) (SomeException TestException))
+  Left (finalExn :: SomeException) <- try . runStackT $
+    withErrorNamespace "A" $
+    catchAnyWithContext (throwM TestException) $ \exn ->  do
+      liftIO . putStrLn . displayException $ exn
+      throwM exn
+
+  putStrLn $ displayException finalExn
+  assertBool (displayRawExceptions testExceptionProxy referenceExn finalExn)
+    $ structurallyEq testExceptionProxy referenceExn finalExn
+
+testRethrowKeepsExceptionUnchangedCatchAnyWithoutCtx :: TestConf -> Assertion
+testRethrowKeepsExceptionUnchangedCatchAnyWithoutCtx TestConf {..} = do
+  let referenceExn = SomeException
+        (ErrorWithContext (ErrorContext HashMap.empty ["A"])
+                          (SomeException TestException))
+  Left (finalExn :: SomeException) <-
+    try
+    . runStackT
+    $ withErrorNamespace "A"
+    $ catchAnyWithoutContext (throwM TestException) throwM
+
+  assertBool (displayRawExceptions testExceptionProxy referenceExn finalExn)
+    $ structurallyEq testExceptionProxy referenceExn finalExn
+
+displayRawExceptions
+  :: (Exception e, Exception e', Exception p) => Proxy p -> e -> e' -> String
+displayRawExceptions proxy e e' =
+  displayRawException proxy e <> " vs. " <> displayRawException proxy e'
+
+-- testEnsureExceptionContextThrowM :: TestConf -> Assertion
+-- testEnsureExceptionContextThrowM TestConf { .. } = do
+--   Left (ErrorWithContext ctx exn) <- tryAnyWithContext . runStackT $ do
+--     withErrorNamespace "A" $
+--       ensureExceptionContext $
+--         throwM Overflow
+--   Just Overflow @=? fromException exn
+--   ["A"] @=? errorContextNamespace ctx
+
+-- testAsyncExceptionContextEnriched :: TestConf -> Assertion
+-- testAsyncExceptionContextEnriched TestConf {..} = do
+--   t <- myThreadId
+--   v <- newEmptyMVar
+--   liftIO . forkIO $ do
+--     threadDelay (10 ^ (6 :: Int))
+--     liftIO $ throwTo t TestException
+--   Left (exn @ (ErrorWithContext ctx someExnWithoutCtx)) <-
+--     tryAnyWithContext
+--     . runStackT
+--     $ withErrorNamespace "A"
+--     $ do
+--         -- ensureExceptionContext $
+--         -- liftIO $ 
+--         -- catch (throwM TestException) $ \ (e :: TestException) -> do
+--         -- --   undefined
+--           -- undefined
+--           -- error "hi"
+--         -- liftIO $ 
+--         --  liftIO $
+--         catchAnyWithContext (throwM TestException)
+--           $ \ exnWithCtx @ (ErrorWithContext ctx e) -> do
+--               liftIO $ putStrLn "********************"
+--               ctx' <- errorContextCollect
+--               liftIO $ putStrLn $ "Ctx: " ++ errorContextAsString ctx
+--               error "End"
+--               -- liftIO
+--               --   $  putStrLn
+--               --   $  "displayRawException: "
+--               --   <> displayRawException (Proxy :: Proxy TestException) e
+--               -- throwM exnWithCtx
+
+--               -- catch (void $ takeMVar v) $ \ (someExn :: SomeException) -> do
+--           --   liftIO $ putStrLn $ show (displayException someExn)
+--   putStrLn $ "Caught: " ++ displayRawException (Proxy :: Proxy TestException) exn
+--   Just TestException @=? fromException someExnWithoutCtx
+--   ["A"] @=? errorContextNamespace ctx
+
+data RawException = SomeExceptionWrapper RawException
+  | RealExceptionWithoutCtx String
+  | RealExceptionWithCtx RawException
+  | forall exn. Exception exn => UnknownException exn
+
+displayRawException
+  :: forall e f . (Exception e, Exception f) => Proxy e -> f -> String
+displayRawException _proxy exception = go (decomposeRawException exception)
+ where
+  decomposeRawException :: Exception exn => exn -> RawException
+  decomposeRawException exn =
+    fromMaybe (UnknownException exn)
+      $   (case cast exn :: Maybe SomeException of
+            Just (SomeException e) ->
+              Just (SomeExceptionWrapper (decomposeRawException e))
+            Nothing -> Nothing
+          )
+      <|> (case cast exn :: Maybe (ErrorWithContext e) of
+            Just (ErrorWithContext _ctx e) ->
+              Just (RealExceptionWithCtx (decomposeRawException e))
+            Nothing -> Nothing
+          )
+      <|> (case cast exn :: Maybe (ErrorWithContext SomeException) of
+            Just (ErrorWithContext _ctx e) ->
+              Just (RealExceptionWithCtx (decomposeRawException e))
+            Nothing -> Nothing
+          )
+      <|> RealExceptionWithoutCtx
+      .   show
+      <$> (cast exn :: Maybe e)
+
+      --   case cast exn :: Maybe (ErrorWithContext e) of
+      --   Just e -> RealExceptionWithCtx (show e)
+      --   Nothin
+      -- case cast exn :: Maybe e of
+      --   Just e  -> RealExceptionWithoutCtx (show e)
+      --   Nothing -> case cast exn :: Maybe (ErrorWithContext SomeException) of
+      --   Just (ErrorWithContext _ctx exnWithoutCtx) ->
+      --     RealExceptionWithCtx (decomposeRawException exnWithoutCtx)
+      --   Nothing -> UnknownException exn
+
+  go (UnknownException        exn) = show exn
+  go (RealExceptionWithCtx    exn) = "ErrorWithContext(" <> go exn <> ")"
+  go (RealExceptionWithoutCtx str) = str
+  go (SomeExceptionWrapper    exn) = "SomeException(" <> go exn <> ")"
