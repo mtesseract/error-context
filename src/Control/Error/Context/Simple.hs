@@ -30,11 +30,11 @@ import           Data.Aeson
 
 import           Control.Error.Context.Exception
 
-import           Control.Monad.Catch            ( Exception(..)
-                                                , Handler(..)
+import           Control.Monad.Catch            ( Handler(..)
                                                 , MonadCatch(..)
                                                 , SomeException(..)
                                                 , MonadThrow
+                                                , MonadMask
                                                 , throwM
                                                 , catches
                                                 )
@@ -54,7 +54,8 @@ newtype ErrorContextT m a =
                            , Monad
                            , MonadTrans
                            , MonadState s
-                           , MonadWriter w )
+                           , MonadWriter w
+                           , MonadMask )
 
 runErrorContextT :: ErrorContextT m a -> m a
 runErrorContextT = flip runReaderT mempty . _runErrorContextT

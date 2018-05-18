@@ -38,10 +38,10 @@ Consider this IO action:
 ```haskell
 testExample :: IO ()
 testExample = do
-  Left errWithCtx <- tryAnyWithContext . runErrorContextT $ do
+  Left errWithCtx :: Either (ErrorWithContext SomeException) () <- try . runErrorContextT $
     withErrorNamespace "middle-earth" $
-      withErrorNamespace "mordor" $
-      withErrorContext "ring-carrier" ("Frodo" :: Text) $ 
+    withErrorNamespace "mordor" $
+    withErrorContext "ring-carrier" ("Frodo" :: Text) $
       throwM TestException
   putStrLn . displayException $ errWithCtx
 ```
